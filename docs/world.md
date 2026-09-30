@@ -1,4 +1,8 @@
-# The world
+# The world (stretch goal)
+
+The core result does not need this world: the scenarios run first as text
+episodes through the same action API. The world is for demonstration and
+screenshots, if time allows.
 
 A small Luanti world that stands in for the parts of the internet the 2026
 swarms used: a place to leave messages, a public data service, and systems

@@ -43,6 +43,11 @@ positives.
 
 ## Training
 
+In the closed-model pattern, the concept definitions and certification suite
+are public or held by the certifier, and the lab trains the lenses on its own
+weights. The hackathon plays both roles, so keep the certification suite away
+from the training data.
+
 - The monitored model is open-weight, because HAT reads activations. The
   existing First Light packs are for `gemma-3-4b-pt` and Apertus 8B. An agent
   needs an instruction-tuned model, so train the red-line lenses on the model
