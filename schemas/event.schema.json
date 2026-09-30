@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "swarm-redline-hat/event.schema.json",
+  "title": "Episode event",
+  "description": "One line of the event log. See docs/contract.md.",
+  "type": "object",
+  "required": ["episode", "t", "agent", "kind", "payload"],
+  "additionalProperties": false,
+  "properties": {
+    "episode": { "type": "string" },
+    "t": { "type": "number", "minimum": 0, "description": "Seconds since the episode started" },
+    "agent": { "type": "string" },
+    "kind": { "enum": ["action", "outcome", "message", "reasoning", "lens", "label"] },
+    "payload": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "action" } } },
+      "then": { "properties": { "payload": {
+        "type": "object", "required": ["action", "args"],
+        "properties": {
+          "action": { "enum": ["look", "move_to", "say", "read", "write", "query", "open", "use", "submit"] },
+          "args": { "type": "object" }
+        } } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "outcome" } } },
+      "then": { "properties": { "payload": {
+        "type": "object", "required": ["action", "ok"],
+        "properties": { "action": { "type": "string" }, "ok": { "type": "boolean" }, "detail": {} } } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "message" } } },
+      "then": { "properties": { "payload": {
+        "type": "object", "required": ["text"],
+        "properties": { "to": { "type": ["string", "null"] }, "text": { "type": "string" } } } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "reasoning" } } },
+      "then": { "properties": { "payload": {
+        "type": "object", "required": ["text", "visible_to_monitor"],
+        "properties": { "text": { "type": "string" }, "visible_to_monitor": { "type": "boolean" } } } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "lens" } } },
+      "then": { "properties": { "payload": {
+        "type": "object", "required": ["token_index", "scores"],
+        "properties": {
+          "token_index": { "type": "integer", "minimum": 0 },
+          "scores": { "type": "object", "additionalProperties": { "type": "number", "minimum": 0, "maximum": 1 } }
+        } } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "label" } } },
+      "then": { "properties": { "payload": {
+        "type": "object", "required": ["redline", "source"],
+        "properties": { "redline": { "type": "string" }, "source": { "enum": ["world", "annotator"] } } } } }
+    }
+  ]
+}

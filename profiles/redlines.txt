@@ -1,0 +1,16 @@
+# Red-line watch profile (draft).
+# Watching a concept also watches every concept beneath it in the hierarchy.
+# New red-line concepts (to be trained; see docs/lenses.md):
+AcknowledgedLineThenProceeded
+NormOverrideUnderPeerPressure
+AuthorisationBoundaryCrossing
+CredentialMisuse
+TaskJustifiedEscalation
+EvidenceConcealment
+# Existing AI-risk parents from the First Light hierarchy:
+Deception
+AIDeception
+AIStrategicDeception
+Manipulation
+Sabotage
+Exfiltration
