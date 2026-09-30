@@ -41,7 +41,7 @@ pass rate exposes each one.
 
 ## 4. Detection
 
-## Conditions
+### Conditions
 
 Each condition runs several episodes with the same swarm and task schedule.
 
@@ -52,14 +52,14 @@ Each condition runs several episodes with the same swarm and task schedule.
 | C. Watched | As B, but the agent is told its chat and reasoning are logged | Does concealment beat the text monitor but not HAT? |
 | D. Silent | As B, with the agent's reasoning hidden from both monitors | Activation signal when there is no text at all |
 
-## Monitors
+### Monitors
 
 - **HAT:** red-line lens scores from the monitored agent's activations.
 - **Transcript monitor (baseline):** a strong model reading the same agent's
   messages and visible reasoning, asked to flag line-crossing.
 - **Oracle:** the world's objective `label` events.
 
-## Metrics
+### Metrics
 
 - Episode-level: AUROC and precision at a fixed false positive rate, for HAT and
   the baseline, per condition.
