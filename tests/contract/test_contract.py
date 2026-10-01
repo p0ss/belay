@@ -1,0 +1,89 @@
+import json
+
+import pytest
+from fastapi.testclient import TestClient
+
+from belay.contract import AlertRecord, Certificate, GenerateResponse, key_from_env, sign, verify
+from belay.contract.events import EventLog, read, validate
+from belay.contract.service import create_app
+from belay.contract.stub import StubBackend
+
+
+def request(text, i=0, episode="ep-test"):
+    return {"request_id": f"r-{i}", "session_id": "s-1", "agent": "a-1", "episode": episode,
+            "messages": [{"role": "user", "content": text}], "max_tokens": 64}
+
+
+@pytest.fixture
+def client(tmp_path):
+    return TestClient(create_app(StubBackend(latency_ms=0), tmp_path / "alerts.jsonl")), tmp_path
+
+
+def test_sign_verify_round_trip_and_tamper():
+    key = key_from_env()
+    record = {"a": 1, "b": "x"}
+    record["signature"] = sign(record, key)
+    assert verify(record, key)
+    record["b"] = "y"
+    assert not verify(record, key)
+
+
+def test_generate_signed_and_alerts_on_designated_field(client):
+    c, tmp = client
+    r = c.post("/generate", json=request("judicial review under the constitution"))
+    assert r.status_code == 200
+    resp = GenerateResponse.model_validate(r.json())
+    assert verify(resp, key_from_env())
+    assert {a.concept for a in resp.alerts} == {"ConstitutionalLaw"}
+    assert resp.coverage.watched == 3
+
+    events = list(read(tmp / "alerts.jsonl"))
+    assert len(events) == 1 and events[0]["kind"] == "alert"
+    record = AlertRecord.model_validate(events[0]["payload"])
+    assert verify(record, key_from_env())
+
+
+def test_no_alert_on_distant_field(client):
+    c, _ = client
+    resp = c.post("/generate", json=request("organic chemistry of benzene rings")).json()
+    assert resp["alerts"] == []
+
+
+def test_altered_log_fails_verification(client):
+    c, tmp = client
+    c.post("/generate", json=request("the social contract in hobbes"))
+    line = (tmp / "alerts.jsonl").read_text().splitlines()[0]
+    event = json.loads(line)
+    event["payload"]["alert"]["concept"] = "LegalStudies"
+    assert not verify(AlertRecord.model_validate(event["payload"]), key_from_env())
+
+
+def test_tamper_off_claims_coverage_but_is_silent(tmp_path):
+    c = TestClient(create_app(StubBackend("off", latency_ms=0), tmp_path / "a.jsonl"))
+    resp = c.post("/generate", json=request("judicial review under the constitution")).json()
+    assert resp["alerts"] == [] and resp["coverage"]["watched"] == 3
+
+
+def test_certificate_install_binds_identity(client):
+    c, _ = client
+    ident = c.get("/health").json()["identity"]
+    cert = Certificate(certificate_id="c-1", model_hash=ident["model_hash"], pack=ident["pack"],
+                       profile_hash=ident["profile_hash"], issued="2026-10-03", certified_until="2026-11-03",
+                       recertify_at="new model version")
+    assert c.post("/certificate", json=cert.model_dump()).status_code == 200
+    resp = c.post("/generate", json=request("hello")).json()
+    assert resp["identity"]["certificate_id"] == "c-1"
+
+    bad = cert.model_copy(update={"model_hash": "sha256:other"})
+    assert c.post("/certificate", json=bad.model_dump()).status_code == 409
+
+
+def test_event_log_validates(tmp_path):
+    log = EventLog(tmp_path / "e.jsonl", "ep-1")
+    log.write("a-1", "action", {"action": "look", "args": {}})
+    log.write("a-1", "label", {"redline": "ConstitutionalLaw", "source": "world"})
+    with pytest.raises(Exception):
+        log.write("a-1", "action", {"action": "teleport", "args": {}})
+    assert len(list(read(tmp_path / "e.jsonl"))) == 2
+    with pytest.raises(Exception):
+        validate({"episode": "e", "t": 0, "agent": "a", "kind": "nope", "payload": {}})

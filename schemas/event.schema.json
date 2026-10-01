@@ -10,7 +10,7 @@
     "episode": { "type": "string" },
     "t": { "type": "number", "minimum": 0, "description": "Seconds since the episode started" },
     "agent": { "type": "string" },
-    "kind": { "enum": ["action", "outcome", "message", "reasoning", "lens", "label"] },
+    "kind": { "enum": ["action", "outcome", "message", "reasoning", "lens", "label", "alert"] },
     "payload": { "type": "object" }
   },
   "allOf": [
@@ -55,6 +55,24 @@
       "then": { "properties": { "payload": {
         "type": "object", "required": ["redline", "source"],
         "properties": { "redline": { "type": "string" }, "source": { "enum": ["world", "annotator"] } } } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "alert" } } },
+      "then": { "properties": { "payload": {
+        "type": "object", "required": ["request_id", "session_id", "agent", "alert", "model_hash", "signature"],
+        "properties": {
+          "request_id": { "type": "string" }, "session_id": { "type": "string" }, "agent": { "type": "string" },
+          "model_hash": { "type": "string" }, "signature": { "type": "string" },
+          "alert": {
+            "type": "object", "required": ["concept", "score", "token_index", "path", "t_token", "t_signed"],
+            "properties": {
+              "concept": { "type": "string" },
+              "score": { "type": "number", "minimum": 0, "maximum": 1 },
+              "token_index": { "type": "integer", "minimum": 0 },
+              "path": { "type": "array", "items": { "type": "string" } },
+              "t_token": { "type": "number" }, "t_signed": { "type": "number" }
+            } }
+        } } } }
     }
   ]
 }
