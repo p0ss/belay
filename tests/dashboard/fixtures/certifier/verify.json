@@ -1,0 +1,8 @@
+{
+ "kind": "verify",
+ "canaries": {
+  "passed": 3,
+  "failed": 1,
+  "total": 4
+ }
+}
