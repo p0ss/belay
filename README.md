@@ -67,32 +67,49 @@ Activation probes can work the same way for closed models:
 The weights stay closed. What is opened is the behaviour of the detector,
 which is what a regulator needs.
 
+## The hypothesis
+
+**If someone can train a probe for a red line, we can monitor it in real time
+across a black-box swarm, in a production-like runtime, and certify it from
+outside the box.**
+
+Belay is about the monitoring, not the red lines. What counts as a red line is
+for standard setters to define, and others at the hackathon will work on
+detecting specific behaviours. We show that whatever probe they train can be
+carried, run cheaply, and certified without opening the model.
+
 ## What we will show
 
-1. **Red-line lenses** that detect an agent crossing a line, not swarm activity
-   in general: "I should stop here, but peers are doing it, so I'll proceed."
-2. **A sealed-detector demonstration.** An open-weight model stands in for a
-   closed one behind an API boundary. On the "lab" side, HAT runs the lenses.
-   On the "certifier" side, a harness with no access to weights or lenses
-   certifies and then verifies the detector from its alert stream alone.
-3. **The cost.** A reproducible benchmark of latency, throughput and memory
-   overhead with the lenses on and off.
-4. **The comparison.** On swarm scenarios, HAT flags line-crossing where a
-   monitor reading only the transcript does not, including when the agent is
-   told its chat is logged.
-5. **Stretch:** the same scenarios played out in a small Luanti world, for
-   demonstration and screenshots.
+1. **A sealed detector.** An open-weight model, Gemma 4 E4B-it, stands in for a
+   closed one behind an API boundary. On the "lab" side, HAT runs lenses on its
+   activations. Nothing crosses the boundary except completions and signed
+   alerts.
+2. **A swarm in a production-like runtime.** Many agent sessions run
+   concurrently through the one sealed model server, with alerts streamed in
+   real time.
+3. **Proxy red lines with known accuracy.** Instead of a red line we would have
+   to define and annotate ourselves, the certifier designates concepts from an
+   existing, measured lens pack (the university ontology on Gemma 4 E4B-it, hard
+   AUROC 0.82) as stand-in red lines. Ground truth is easy to set: the topic of
+   each task.
+4. **Certification and verification from outside.** A certifier with no access
+   to weights or lenses certifies the detector from its alerts alone, then
+   verifies it in operation with canaries, and catches deliberate tampering.
+5. **The cost.** Latency, throughput and memory with lenses off and on, from one
+   agent to a swarm.
+6. **Stretch:** the scenarios in a small Luanti world, for screenshots.
 
-The core result for the labs: **probes can be deployed with low overhead and
-provide regulatory oversight of closed models, verified from the outside.**
+We make no claim to detect deception or any specific behaviour. The result is
+that the pipeline works: **a probe, once trained, can be deployed with low
+overhead and give regulators verifiable oversight of a closed model.**
 
 ## Workstreams
 
 | Team | Builds | Hands over |
 |---|---|---|
-| Hat (lab side) | Red-line concepts, training data, lenses on the stand-in model, the sealed detector service, the overhead benchmark | A detector behind an API, emitting alerts |
-| Certifier | Certification and canary suites, the black-box verification harness, the transcript-only baseline | Certification and verification results |
-| Swarm | Swarm scenarios with peer pressure, first as text episodes, then in the world if time allows | Episodes logged to the contract |
+| Hat (lab side) | The sealed detector service around HAT and the stand-in model, concurrent sessions, alert streaming, the overhead benchmark | A detector behind an API, emitting signed alerts |
+| Certifier | Proxy red-line designation, certification and canary suites, the black-box verification harness, tamper tests | Certification and verification results |
+| Swarm | Concurrent agent sessions on research tasks across many topics, some touching the proxy red lines, first as text episodes | Episodes logged to the contract, with each task's topic as ground truth |
 | World (stretch) | A minimal Luanti world with the same scenarios | Screenshots and a demo |
 
 The teams work in parallel against one contract: [docs/contract.md](docs/contract.md).
@@ -102,18 +119,21 @@ The teams work in parallel against one contract: [docs/contract.md](docs/contrac
 - [docs/certification.md](docs/certification.md): the fire alarm pattern in detail
 - [docs/plan.md](docs/plan.md): the 48-hour plan and times in Canberra and San Francisco
 - [docs/contract.md](docs/contract.md): the detector interface, the event log and the agent action API
-- [docs/lenses.md](docs/lenses.md): red-line concepts, training data, watch profile
+- [docs/lenses.md](docs/lenses.md): which probes, and why proxies
 - [docs/evaluation.md](docs/evaluation.md): overhead, certification, verification and detection
 - [docs/world.md](docs/world.md): the Luanti world (stretch)
 - [docs/boundaries.md](docs/boundaries.md): containment and what is out of scope
 - [schemas/event.schema.json](schemas/event.schema.json): the event log schema
-- [profiles/redlines.txt](profiles/redlines.txt): the draft watch profile
+- [profiles/proxy-redlines.txt](profiles/proxy-redlines.txt): the proxy red-line watch profile
 
 ## Building on
 
 - **HAT** (`headspace-ambient-transducer`): runtime concept monitoring with
-  hierarchical lens packs and watch profiles.
-- **HatCat** (`HatCatDev`): lens training (`scripts/train_full_lens_pack.py`),
+  hierarchical lens packs and watch profiles. Per-layer band probes
+  (`<Concept>@L<n>.pt`), needed for the university packs, are being added now.
+- **HatCat** (`HatCatDev`): the university lens packs on Gemma 4 E4B-it and
+  their measured quality (`docs/results/2026-09-28_university_lens_scaling.md`),
+  lens training (`scripts/train_full_lens_pack.py`),
   the per-token overhead work in `docs/results/PROBE_PERFORMANCE_OPTIMIZATION_RESULTS.md`,
   and the certification fields in the ASK audit schema.
 - **Kythen and Goanna**: Luanti worlds and a Godot client, for the stretch goal.

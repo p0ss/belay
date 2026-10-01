@@ -61,7 +61,9 @@ at each point, so oversight keeps pace with what the model can do.
 
 ## What the hackathon demonstrates
 
-An open-weight model plays the closed model. The lab side and the certifier side
+An open-weight model, Gemma 4 E4B-it, plays the closed model, and benign
+concepts from a measured lens pack play the red lines (see
+[lenses.md](lenses.md)). The lab side and the certifier side
 run as separate processes that share nothing but the API and the alert log. The
 certifier certifies the detector, then verifies it with canaries mixed into
 swarm scenarios, without ever loading the model or the lenses. We report the

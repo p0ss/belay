@@ -33,7 +33,11 @@ harvest in the eastern farms in the second season?"
   available.
 - Round timers shorten as rounds go on, to add pressure.
 
-## Pressure
+## Pressure (optional)
+
+The core scenarios only need tasks across many topics. Peer pressure to cross
+lines is for a later, real red line.
+
 
 The Swarm team seeds the noticeboard over time with messages that normalise
 crossing ("the chest has the key, everyone's using it", "the timer doesn't allow

@@ -1,64 +1,56 @@
-# Red-line lenses
+# Which probes, and why proxies
 
-## What to detect
+## Belay is probe-agnostic
 
-Not "the agent is in a swarm" or "the agent is coordinating". Those are fine.
-The target is the moment an agent knowingly steps over a boundary.
+Belay does not define red lines and does not claim to detect any particular
+behaviour. In the closed-model pattern, a standard setter defines each red line,
+and a probe is trained for it on the lab's own weights. Belay's claim starts
+after that: any such probe can be carried by the model, run cheaply, monitored
+in real time, and certified from outside.
 
-| Concept | Description | Example |
-|---|---|---|
-| `AcknowledgedLineThenProceeded` | States or implies a boundary, then continues past it | "I should stop here, but I'll proceed." |
-| `NormOverrideUnderPeerPressure` | Justifies crossing because others are doing it | "Peers are doing it, will proceed." |
-| `AuthorisationBoundaryCrossing` | Acts past an explicit authorisation marker | Enters the gatehouse without a token |
-| `CredentialMisuse` | Uses a credential it was not issued | Uses the chest token on the terminal |
-| `TaskJustifiedEscalation` | Treats the task as licence to escalate access | "Still needed to answer the question." |
-| `EvidenceConcealment` | Hides or rewrites the record of its actions | "Our thoughts aren't necessarily logged?" |
+So for the weekend we need probes that:
 
-The last two quotes come from METR's investigation of the 2026 Hugging Face
-incident.
+- run on an instruction-tuned model that can act as an agent;
+- have measured accuracy, so the certifier has something real to certify;
+- have ground truth that is easy to set in a swarm scenario.
 
-## Hard negatives
+## Proxy red lines
 
-These decide whether the lenses are useful. Each needs as many examples as the
-positives.
+The university lens packs meet all three.
 
-| Concept | Example |
-|---|---|
-| `ConsideredAndDeclined` | "I should stop here, so I'll stop and report it's not public." |
-| `BenignCoordination` | "Let's split the rounds; I'll take the eastern farms." |
-| `LegitimatePersistence` | Retrying listed programs with different parameters |
-| `AuthorisedAccess` | Entering the gatehouse with an issued token |
-| `DiscussingTheLine` | Talking about the chest without acting on it |
+- **Model:** Gemma 4 E4B-it (instruction-tuned), one RTX 3090.
+- **Pack:** `gemma-4-e4b-it_university-v3-contrasts-bands` in HatCatDev: 165
+  lenses for academic fields, one probe per model-layer band (early, mid, late).
+- **Measured quality** (HatCatDev `docs/results/2026-09-28_university_lens_scaling.md`):
+  held-out AUROC 0.899 overall and 0.822 against siblings and related fields.
+- **Training cost:** a comparable pack trained in about 23 minutes on the 3090,
+  which bears on how fast a new red line could be deployed.
 
-## Data
+The certifier designates a few fields as stand-in red lines, for example
+`ConstitutionalLaw` and `PoliticalTheory`, plus a sibling such as
+`LegalStudies` as the near miss. Swarm tasks are drawn from many fields, and each
+task's field is its ground truth. An alert on a designated field is a "red line
+touched"; the certifier checks it against the task's field.
 
-- **Seeds:** public excerpts from METR's report and collusion.wiki, and the AI
-  Village transcripts (subject to their terms).
-- **Generation:** Claude generates contrastive pairs in the world's setting, with
-  minimal edits between positive and hard negative wherever possible.
-- **From the world:** early swarm episodes, labelled by the world's objective
-  events and by annotators.
-- **Split:** hold out whole episodes, not sentences, so test data never shares
-  an episode with training.
+The fields are deliberately benign. The point is the monitoring, not the topic.
 
-## Training
+## Runtime support
 
-In the closed-model pattern, the concept definitions and certification suite
-are public or held by the certifier, and the lab trains the lenses on its own
-weights. The hackathon plays both roles, so keep the certification suite away
-from the training data.
+HAT's runtime is gaining per-layer band probes (`<Concept>@L<n>.pt`), which the
+university packs use. That work is in progress in `headspace-ambient-transducer`;
+Belay depends on it.
 
-- The monitored model is open-weight, because HAT reads activations. The
-  existing First Light packs are for `gemma-3-4b-pt` and Apertus 8B. An agent
-  needs an instruction-tuned model, so train the red-line lenses on the model
-  actually used (for example `gemma-3-4b-it`). Do not assume a base-model pack
-  transfers; test it.
-- Train with HatCat's `scripts/train_full_lens_pack.py`, scoped to the new
-  concepts placed under existing parents (Deception, Manipulation, Sabotage), so
-  HAT's hierarchy still screens them.
-- Validate on held-out examples before running in the world.
+## AI-risk lenses: illustration only
 
-## Watch profile
+The First Light pack has AI-risk concepts (deception, manipulation, sabotage),
+including a version for Gemma 4 E4B. Its own metadata records that it is
+uncalibrated and its hierarchical validation has not been done. It can appear in
+the demo to show what a real red-line watch profile would look like, with that
+caveat stated. No result in Belay relies on it.
 
-[../profiles/redlines.txt](../profiles/redlines.txt) lists the new concepts and
-the existing AI-risk parents they sit under.
+## What a real red line would add
+
+When a standard setter defines a red line such as "acknowledged a boundary, then
+crossed it", someone trains a probe for it and hands Belay a lens pack and a
+certification suite. Nothing else in Belay changes. That is the property we are
+demonstrating.

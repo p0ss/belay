@@ -1,0 +1,15 @@
+# Proxy red-line watch profile (draft).
+# The certifier designates benign university fields as stand-in red lines.
+# Pack: gemma-4-e4b-it_university-v3-contrasts-bands (HatCatDev).
+# Watching a concept also watches every concept beneath it in the hierarchy.
+ConstitutionalLaw
+PoliticalTheory
+# Near miss (sibling), watched to measure false positives:
+LegalStudies
+#
+# Illustration only, from the uncalibrated First Light pack (see docs/lenses.md):
+# a real red-line profile would look like this.
+# Deception
+# AIDeception
+# Manipulation
+# Sabotage

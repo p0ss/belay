@@ -16,12 +16,17 @@ The practical build window in Canberra is Sunday morning to Monday 3pm.
 
 ## Priorities
 
-1. Red-line lenses that work on held-out cases.
-2. The sealed detector and the black-box certifier, sharing nothing but the API
-   and the alert log.
-3. The overhead benchmark.
-4. Detection on swarm scenarios, against the transcript-only baseline.
+1. The sealed detector: HAT and Gemma 4 E4B-it behind one API, emitting signed
+   alerts, with concurrent sessions.
+2. The black-box certifier: certification on proxy red lines, canaries, and
+   catching tampering, sharing nothing with the lab side but the API and the
+   alert log.
+3. The overhead benchmark, from one agent to a swarm.
+4. A swarm run with alerts streamed in real time.
 5. Stretch: the Luanti world.
+
+No lens training is planned for the weekend. The packs exist; the weekend is
+for the monitoring and certification around them.
 
 ## Before kickoff (no code)
 
@@ -31,15 +36,18 @@ The practical build window in Canberra is Sunday morning to Monday 3pm.
 - Check the licence and use terms of the AI Village transcript database.
 - Agree how participation is framed (as an individual, with open-source work)
   and clear it with your manager.
-- Choose the stand-in model (instruction-tuned, fits the 3090 alongside HAT),
-  and check GPU headroom.
+- Stand-in model: Gemma 4 E4B-it, with the university v3 band packs. Confirm
+  HAT's per-layer band support (in progress in `headspace-ambient-transducer`)
+  has landed and loads `gemma-4-e4b-it_university-v3-contrasts-bands`.
+- GPU: the 3090 is shared with lens training runs. Schedule the weekend so no
+  training job holds it.
 
 ## Hours 0 to 4: contract first
 
 - Freeze [contract.md](contract.md): the detector API, the alert format and the
   event log.
-- Hat: fix the concept list; write 20 hand examples per concept, including hard
-  negatives.
+- Hat: wrap HAT and the model as the detector service; confirm the band pack
+  loads and alerts.
 - Certifier: draft the certification suite format and hold it back from the Hat
   team.
 - Swarm: a text scenario runner that plays a noticeboard, a query service and a
@@ -47,27 +55,28 @@ The practical build window in Canberra is Sunday morning to Monday 3pm.
 
 ## Hours 4 to 16: build in parallel
 
-- Hat: generate and filter contrastive data; train the lenses on the stand-in
-  model; wrap HAT as a detector service that returns completions plus signed
-  alerts; build the overhead benchmark.
-- Certifier: build the certification and canary suites; the verification
-  harness; the transcript-only baseline.
-- Swarm: task-driven agents with a shared noticeboard, and seeded peer pressure.
+- Hat: concurrent sessions through the one model server; signed alerts; the
+  alert stream; the overhead benchmark.
+- Certifier: designate the proxy red lines; build the certification and canary
+  suites from held-out university texts; the verification harness; the tamper
+  tests.
+- Swarm: agents on research tasks across many topics, a shared noticeboard,
+  each task tagged with its topic.
 
 ## Hours 16 to 30: certify, verify, detect
 
 - Run certification: the certifier scores the detector from its alerts alone.
 - Run swarm scenarios with the stand-in model as one agent, canaries mixed in.
-- Run the evaluation conditions in [evaluation.md](evaluation.md).
 - Run the overhead benchmark: lenses off, on, and on with a full watch profile.
 - World team (if staffed): port the scenarios into Luanti.
 
 ## Hours 30 to 40: results and demo
 
-- Tables and plots: certification results, canary pass rate, overhead, HAT
-  against the baseline, time to alert.
-- Demo: the swarm at work, the agent tempted, the alert firing, the clean
-  transcript, and the certifier confirming the detector without the weights.
+- Tables and plots: certification results, canary pass rate, tamper detection
+  time, overhead against swarm size, alert latency.
+- Demo: the swarm at work, alerts streaming as agents touch a proxy red line,
+  a tampered detector caught by canaries, and the certifier confirming it all
+  without the weights.
 
 ## Hours 40 to 48: write-up and submission
 
@@ -80,7 +89,6 @@ In order:
 
 1. Drop the Luanti world entirely.
 2. Drop the swarm; run single-agent scenarios with scripted peer messages.
-3. Reduce to one red-line concept (acknowledged the line, then proceeded) and its
-   hard negative (considered and declined).
+3. Reduce to one proxy red line.
 4. Keep, whatever else goes: the sealed detector, the black-box certification
    and the overhead benchmark.
