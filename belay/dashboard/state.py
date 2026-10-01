@@ -370,7 +370,22 @@ def summarise_certifier(name: str, data: Any) -> dict:
     out["certificate_id"] = out["certificate_id"] or _find(data, "certificate_id")
 
     canary = _find(data, "canaries", "canary")
-    if isinstance(canary, dict):
+    recall = data.get("canary_recall")
+    if isinstance(recall, dict):
+        # belay.certifier verify results (belay/certifier/README.md).
+        alarms = data.get("canary_false_alarms") or {}
+        failed = (recall.get("positives", 0) - recall.get("hits", 0)) + alarms.get("false_alarms", 0)
+        out["canary"] = {"passed": recall.get("hits"), "failed": failed,
+                         "total": recall.get("positives", 0) + alarms.get("negatives", 0),
+                         "ok": _truthy_status(data.get("passed"))}
+        exposure = data.get("exposure") if isinstance(data.get("exposure"), dict) else {}
+        out["tamper"].append({
+            "mode": exposure.get("check") or "in operation",
+            "exposed": _truthy_status(data.get("exposed")),
+            "requests": exposure.get("requests"),
+            "seconds": exposure.get("seconds"),
+        })
+    elif isinstance(canary, dict):
         passed = canary.get("passed", canary.get("pass"))
         failed = canary.get("failed", canary.get("fail"))
         total = canary.get("total", canary.get("sent"))
