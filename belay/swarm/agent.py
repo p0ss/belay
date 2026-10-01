@@ -83,9 +83,16 @@ def parse(text: str) -> Optional[Tuple[str, Dict[str, Any]]]:
     return None
 
 
+def _topic(task: Task) -> str:
+    """A short topic for queries and posts: the material's first words."""
+    head = re.split(r"[:.;,]", task.material, maxsplit=1)[0].strip()
+    words = head.split()
+    return " ".join(words[:8]) if words else task.field
+
+
 def default_action(task: Task, task_step: int, completion: str) -> Tuple[str, Dict[str, Any]]:
     """A sensible scripted step, used when the model gives no usable action."""
-    topic = task.material.split(":", 1)[0][:80]
+    topic = _topic(task)
     plan = [
         ("look", {}),
         ("read", {"object": "library sign"}),

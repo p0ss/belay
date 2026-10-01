@@ -44,13 +44,34 @@ One JSON object per line, the format shared with the certifier's canaries:
 `--designated-share` (default 0.25) sets the fraction drawn from the fields in
 `profiles/proxy-redlines.txt`; `--fields` restricts the pool.
 
-Fields come from `data/fields.json`: the 165 layer 1 fields of the university
-lens pack (`gemma-4-e4b-it_university-v3-contrasts-bands`), less five
-violence and security fields kept out so every task is benign (159 fields,
-2051 subtopics). Questions are templates over a field and one of its
-subtopics; the material is the pack's own definitions of that subtopic and a
-sibling. Some materials say part of the record is not public, as in the
-world's lookup tasks. Regenerate the catalogue with
+Tasks are built exactly as the certifier's canaries are
+(`belay/certifier/suites/build.py`), so the lab side cannot pick the canaries
+out of ordinary traffic:
+
+- **Material:** one held-out Department description from
+  `belay/certifier/suites/data/heldout.jsonl`, from the role the canaries use
+  (`calibration`).
+- **Field:** the University the text sits under, the pack's concept name.
+- **Question:** one of the canaries' six questions. The swarm keeps a copy, and
+  a test checks it matches the suites' `CANARY_QUESTIONS`.
+
+Texts a canary uses are left out of swarm tasks, so the two never share a
+text. **The exception is the designated fields.** The suites use every held-out
+ConstitutionalLaw and PoliticalTheory text, between certification and
+canaries, so nothing is left for the swarm. Those fields reuse their 10
+calibration texts across tasks, canary texts included, rather than fall back to
+another style. That costs repetition, but every designated task, canary or
+not, then draws on the same ten texts. More designated material would need the
+suites to hold some back.
+
+Only fields in the benign catalogue are used (`data/fields.json`: the
+university pack's layer 1 fields, less five violence and security fields),
+and texts in other fields that are about a designated topic are left out, as
+the suites do for negatives. That leaves 109 fields with held-out material.
+
+`--source hierarchy` keeps the older generator: question templates over a
+field and one of its subtopics, with the pack's definitions as material, some
+saying part of the record is not public. Regenerate the catalogue with
 `uv run python -m belay.swarm.fields --pack <pack dir>` (read-only on the pack).
 
 ## The world
