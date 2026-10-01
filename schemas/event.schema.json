@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "swarm-redline-hat/event.schema.json",
+  "$id": "belay/event.schema.json",
   "title": "Episode event",
   "description": "One line of the event log. See docs/contract.md.",
   "type": "object",

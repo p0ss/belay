@@ -29,6 +29,14 @@ passing in place.
 - **Log keeper:** receives signed alerts and verification results in a
   tamper-evident log the regulator can inspect.
 
+## Re-certification at pre-agreed points
+
+Like protection on a lead climb, certification is not done once. The standard
+setter and the lab agree in advance the capability points at which the detector
+must be re-certified: a new model version, a new tool or level of autonomy, a
+new deployment setting. The concept list and the certification suite can grow
+at each point, so oversight keeps pace with what the model can do.
+
 ## What the certifier can check without the weights
 
 1. **Detection:** on certification cases with known ground truth, alerts fire

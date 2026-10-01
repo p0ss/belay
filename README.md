@@ -1,4 +1,6 @@
-# Swarm Red-Line HAT
+# Belay
+
+Certified red-line detection for closed models.
 
 Activation probes can give regulators oversight of closed models, at low
 compute cost, without anyone outside the lab seeing the weights.
@@ -7,6 +9,23 @@ This repository sets out the scope of an entry to the
 [AI Swarm Dynamics Hackathon](https://swarmchasing.com) (AI Village and Grove
 Research, 3 to 4 October 2026). It holds the plan and the contracts between
 workstreams. There is no code here yet.
+
+## Why "Belay"
+
+A belay is the rope and system that catch a climber who falls. It is what you
+want on yourself when you go somewhere dangerous, on a rock face or outside a
+spacecraft. It does not stop you climbing. Someone else holds it, and the gear
+is certified to a standard that nobody needs to open to trust.
+
+On a lead climb the climber clips into protection at points along the route.
+Those points are placed before anyone climbs, and a fall only goes back to the
+last one. As the climber gets higher, the protection moves with them, but only
+at the points agreed in advance.
+
+That is the model for overseeing capable agents: a detector the model carries
+with it, held by someone outside the lab, certified without being opened, and
+re-certified at pre-agreed capability points as the model moves into more
+capable or riskier territory.
 
 ## The problem
 
