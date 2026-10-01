@@ -47,6 +47,7 @@ TAMPER_MODES = ("none", "off", "threshold", "swap")
 class StubBackend:
     pack = "stub-university-v3"
     profile = "proxy-redlines"
+    watch = "proxy"
 
     def __init__(self, tamper: str = "none", seed: int = 0, latency_ms: float = 20.0):
         if tamper not in TAMPER_MODES:
@@ -58,7 +59,7 @@ class StubBackend:
         profile = Path(__file__).resolve().parents[2] / "profiles" / "proxy-redlines.txt"
         self.profile_hash = "sha256:" + hashlib.sha256(profile.read_bytes()).hexdigest()
 
-    def generate(self, request: GenerateRequest) -> BackendResult:
+    def generate(self, request: GenerateRequest, emit=None) -> BackendResult:
         start = time.perf_counter()
         prompt = request.messages[-1].content if request.messages else ""
         completion = f"Here is a short answer about: {prompt[:200]}"
@@ -87,6 +88,10 @@ class StubBackend:
                             alerts.append(RawAlert(concept, score, index, PATHS[concept], now))
                         break
 
+        if emit is not None:
+            for alert in alerts:
+                emit(alert)
+            alerts = []
         overhead_ms = (time.perf_counter() - start) * 1000 * 0.1
         # Lenses switched off still claim full coverage: the lie canaries must catch.
         return BackendResult(completion=completion, tokens=len(words), alerts=alerts,
