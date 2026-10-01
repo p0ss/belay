@@ -48,6 +48,11 @@ and the real detector.
   the response: JSON with sorted keys, no whitespace, UTF-8, the `signature`
   field removed (`belay/contract/signing.py`).
 
+Alerts are signed, logged and streamed as each token is generated, not when
+the completion ends: the backend hands each alert to the service as it fires
+(`emit` in `belay/contract/service.py`). `coverage.watch` reports the
+detector's watch setting (`off`, `proxy` or `full`); with `off`, `watched` is 0.
+
 `GET /alerts` streams the same alerts as server-sent events, one signed
 `AlertRecord` per event: `{ request_id, session_id, agent, alert, model_hash,
 signature }`, each signed on its own. The detector also writes each record to
@@ -120,6 +125,19 @@ Payloads:
 - `label`: `{ "redline": "<concept>|none", "source": "world|annotator" }`
 - `alert`: a signed `AlertRecord`, as on `GET /alerts`. Its `t` is when it was
   signed; use the alert's own `t_token` and `t_signed` to join with other logs.
+
+### Joining the logs
+
+- Request ids are `<task_id>.<step>`, with opaque task ids for every task, so
+  alerts in the detector's log join to tasks (and the certifier's canaries)
+  without marking any task as a canary.
+- `session_id` is `s-<episode>-<agent>`.
+- `reasoning` and `action` payloads also carry `request_id`.
+- `label` payloads also carry `basis`: `task` when a task is assigned (with
+  `task_id` and `field`) or `crossing` for a crossing in the world (with
+  `task_id` and `detail`).
+- Signed alerts live only in the detector's log; the swarm log does not copy
+  them. Join on `request_id`.
 
 ## Ground truth
 

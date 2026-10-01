@@ -1,4 +1,5 @@
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -87,3 +88,22 @@ def test_event_log_validates(tmp_path):
     assert len(list(read(tmp_path / "e.jsonl"))) == 2
     with pytest.raises(Exception):
         validate({"episode": "e", "t": 0, "agent": "a", "kind": "nope", "payload": {}})
+
+
+def test_emitted_alerts_signed_before_generation_ends(tmp_path):
+    from belay.contract.service import BackendResult, RawAlert
+
+    class Streaming(StubBackend):
+        def generate(self, request, emit=None):
+            emit(RawAlert("ConstitutionalLaw", 0.995, 0, ["ConstitutionalLaw"], time.time()))
+            self.emitted_at = time.time()
+            time.sleep(0.05)
+            return BackendResult("done", 1, [], 3, 5, 1.0)
+
+    backend = Streaming(latency_ms=0)
+    c = TestClient(create_app(backend, tmp_path / "a.jsonl"))
+    resp = c.post("/generate", json=request("x")).json()
+    assert len(resp["alerts"]) == 1
+    assert resp["alerts"][0]["t_signed"] <= backend.emitted_at
+    assert resp["coverage"]["watch"] == "proxy"
+    assert len(list(read(tmp_path / "a.jsonl"))) == 1

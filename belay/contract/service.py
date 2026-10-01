@@ -12,13 +12,14 @@ Endpoints:
 
 from __future__ import annotations
 
+import inspect
 import json
 import queue
 import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Protocol, Tuple
+from typing import Callable, Dict, Iterator, List, Optional, Protocol, Tuple
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
@@ -47,14 +48,24 @@ class BackendResult:
     overhead_ms: float
 
 
+Emit = Callable[[RawAlert], None]
+
+
 class Backend(Protocol):
-    """What a detector must provide. `generate` may be called from many threads."""
+    """What a detector must provide. `generate` may be called from many threads.
+
+    A backend whose `generate` takes an `emit` argument should call it for each
+    alert as its token is generated: the service signs, logs and streams it at
+    once, which is what makes alerts real time. Alerts emitted that way must
+    not be repeated in the result. A backend may also set `watch` (off, proxy
+    or full) to make coverage self-describing.
+    """
     model_hash: str
     pack: str
     profile: str
     profile_hash: str
 
-    def generate(self, request: GenerateRequest) -> BackendResult: ...
+    def generate(self, request: GenerateRequest, emit: Optional[Emit] = None) -> BackendResult: ...
 
 
 @dataclass
@@ -89,6 +100,7 @@ def create_app(backend: Backend, log_path: Path, key: Optional[bytes] = None) ->
     logs: Dict[str, EventLog] = {}
     logs_lock = threading.Lock()
     state: Dict[str, Optional[Certificate]] = {"certificate": None}
+    streams = "emit" in inspect.signature(backend.generate).parameters
 
     def log_for(episode: str) -> EventLog:
         with logs_lock:
@@ -110,10 +122,10 @@ def create_app(backend: Backend, log_path: Path, key: Optional[bytes] = None) ->
     @app.post("/generate", response_model=GenerateResponse)
     def generate(req: GenerateRequest) -> GenerateResponse:
         log = log_for(req.episode or "detector")
-        result = backend.generate(req)
         alerts: List[Alert] = []
-        records: List[AlertRecord] = []
-        for raw in result.alerts:
+
+        def emit(raw: RawAlert) -> None:
+            """Sign, log and stream one alert now."""
             alert = Alert(
                 concept=raw.concept, score=min(max(raw.score, 0.0), 1.0), token_index=raw.token_index,
                 path=raw.path, t_token=raw.t_token, t_signed=time.time(),
@@ -123,22 +135,24 @@ def create_app(backend: Backend, log_path: Path, key: Optional[bytes] = None) ->
                 alert=alert, model_hash=backend.model_hash,
             )
             record.signature = sign(record, key)
+            payload = record.model_dump(mode="json")
+            log.write(req.agent, "alert", payload, t=alert.t_signed)
+            stream.publish(payload)
             alerts.append(alert)
-            records.append(record)
+
+        result = backend.generate(req, emit=emit) if streams else backend.generate(req)
+        for raw in result.alerts:
+            emit(raw)
 
         response = GenerateResponse(
             request_id=req.request_id, session_id=req.session_id, agent=req.agent,
             completion=result.completion, tokens=result.tokens, alerts=alerts,
             coverage=Coverage(watched=result.watched, resident_peak=result.resident_peak,
-                              pack=backend.pack, profile=backend.profile),
+                              pack=backend.pack, profile=backend.profile,
+                              watch=getattr(backend, "watch", None)),
             overhead_ms=result.overhead_ms, identity=identity(req.agent),
         )
         response.signature = sign(response, key)
-
-        for record in records:
-            payload = record.model_dump(mode="json")
-            log.write(req.agent, "alert", payload, t=record.alert.t_signed)
-            stream.publish(payload)
         return response
 
     @app.get("/alerts")
@@ -150,7 +164,8 @@ def create_app(backend: Backend, log_path: Path, key: Optional[bytes] = None) ->
                 yield ": connected\n\n"
                 while True:
                     try:
-                        item = q.get(timeout=15)
+                        # Short, so a closed client is noticed within a second.
+                        item = q.get(timeout=1)
                     except queue.Empty:
                         yield ": keepalive\n\n"
                         continue
