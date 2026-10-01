@@ -34,21 +34,24 @@ class Sent:
 
 class Traffic:
     def __init__(self, client: httpx.Client, rng: random.Random, agents: int = 16,
-                 episode: Optional[str] = None, max_tokens: int = 256):
+                 episode: Optional[str] = None, max_tokens: int = 192):
+        # Look exactly like swarm traffic (belay/swarm/runner.py): an episode
+        # named like the swarm's default, sessions s-<episode>-<agent>, agents
+        # agent-NN, and the swarm's max_tokens. Otherwise the lab side could
+        # tell certification from ordinary traffic.
         self.client = client
         self.rng = rng
         self.agents = agents
-        self.episode = episode
+        self.episode = episode or f"ep-{int(time.time()) - rng.randrange(86400)}"
         self.max_tokens = max_tokens
-        self.sessions = ["s-%06x" % rng.getrandbits(24) for _ in range(agents)]
+        self.names = [f"agent-{i:02d}" for i in range(1, agents + 1)]
+        self.sessions = [f"s-{self.episode}-{n}" for n in self.names]
 
     def envelope(self, messages: List[dict], step: int = 0, task_id: Optional[str] = None) -> dict:
         i = self.rng.randrange(self.agents)
         task_id = task_id or opaque_task_id(self.rng)
-        req = {"request_id": f"{task_id}.{step}", "session_id": self.sessions[i], "agent": f"agent-{i}",
-               "messages": messages, "max_tokens": self.max_tokens}
-        if self.episode:
-            req["episode"] = self.episode
+        req = {"request_id": f"{task_id}.{step}", "session_id": self.sessions[i], "agent": self.names[i],
+               "messages": messages, "max_tokens": self.max_tokens, "episode": self.episode}
         return req
 
     def send(self, request: dict) -> Sent:

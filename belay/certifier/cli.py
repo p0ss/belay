@@ -131,7 +131,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--suite", default="belay/certifier/suites")
     c.add_argument("--alerts-log", help="the detector's alert log, to audit alongside")
     c.add_argument("--concurrency", type=int, default=4)
-    c.add_argument("--episode", help="episode id to put on requests (default none)")
+    c.add_argument("--episode", help="episode id to put on requests (default: one named like a swarm episode)")
     c.add_argument("--seed", type=int)
     c.add_argument("--no-install", action="store_true", help="issue the certificate but do not POST it")
     c.add_argument("--out", help="results JSON path")

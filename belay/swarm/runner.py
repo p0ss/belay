@@ -173,6 +173,10 @@ class Swarm:
                              "request_id": request_id, "session_id": session}
                 if response is None:
                     reasoning["error"] = "detector unavailable"
+                else:
+                    # The signed response, so the certifier can check signatures,
+                    # coverage and identity on every call, canaries included.
+                    reasoning["response"] = response
                 self.log.write(name, "reasoning", reasoning)
 
                 parsed = policy.parse(completion)
