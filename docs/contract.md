@@ -22,6 +22,7 @@ weights, no lenses, no activations.
   ],
   "coverage": { "watched": 12, "resident_peak": 41, "pack": "redlines-v0" },
   "overhead_ms": 42.7,
+  "identity": { "agent_credential": "...", "model_hash": "...", "pack": "redlines-v0", "certified_until": "..." },
   "signature": "..."
 }
 ```
@@ -29,6 +30,9 @@ weights, no lenses, no activations.
 - `alerts` lists every watched concept that crossed its threshold.
 - `coverage` says what was checked, so an empty `alerts` can be told apart from
   a detector that was not running.
+- `identity` binds the response to the certified model, pack and certification;
+  the agent presents the same credential with its actions (see
+  [certification.md](certification.md)).
 - `signature` is a signature over the response by the lab-side key, so the log
   keeper can show alerts were not altered afterwards. An HMAC is enough for the
   demonstration.
