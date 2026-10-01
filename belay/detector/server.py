@@ -37,8 +37,8 @@ def main() -> None:
                    help="alert threshold (default: HAT's, 0.99 for a probe-calibrated pack)")
     p.add_argument("--tamper-threshold", type=float, default=TAMPER_THRESHOLD,
                    help="the raised threshold for --tamper threshold")
-    p.add_argument("--max-batch", type=int, default=1,
-                   help="1: a request queue, one generation at a time; >1: batch waiting requests")
+    p.add_argument("--max-batch", type=int, default=16,
+                   help="requests generated together as one batch; 1 makes it a plain request queue")
     p.add_argument("--batch-window-ms", type=float, default=5.0,
                    help="how long the worker waits to fill a batch")
     p.add_argument("--device", default="cuda")

@@ -8,6 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from belay.contract import GenerateResponse, key_from_env, verify
+from belay.contract.events import read
 from belay.contract.service import BackendResult, RawAlert, create_app
 from belay.detector.backend import HatBackend
 
@@ -25,7 +26,8 @@ class FakeModelBackend(HatBackend):
         self.lock = threading.Lock()
         super().__init__(*args, load_model=False, hash_cache=None, **kwargs)
 
-    def _generate_batch(self, requests):
+    def _generate_batch(self, requests, emits=None):
+        emits = emits or [None] * len(requests)
         with self.lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
@@ -34,9 +36,13 @@ class FakeModelBackend(HatBackend):
         with self.lock:
             self.active -= 1
         out = []
-        for r in requests:
+        for r, emit in zip(requests, emits):
             text = r.messages[-1].content
             alerts = [RawAlert("Law", 0.995, 0, ["Root", "Law"], time.time())] if "law" in text else []
+            if emit is not None:  # as the real backend: emitted alerts are not repeated
+                for a in alerts:
+                    emit(a)
+                alerts = []
             out.append(BackendResult(completion=f"echo {text}", tokens=3, alerts=alerts,
                                      watched=self.watched, resident_peak=self.watched, overhead_ms=0.1))
         return out
@@ -73,6 +79,10 @@ def test_four_concurrent_sessions_signed(tmp_path, fake_model, fake_pack, profil
         assert body["session_id"] == f"s-{i}"
         assert bool(body["alerts"]) == ("law" in texts[i])
         assert body["identity"]["model_hash"] == backend.model_hash
+        assert body["coverage"]["watch"] == "proxy"
+    # Emitted alerts were logged once each.
+    logged = [e for e in read(tmp_path / "alerts.jsonl") if e["kind"] == "alert"]
+    assert sorted(e["payload"]["request_id"] for e in logged) == ["r-0", "r-2"]
     # One generation at a time either way; batching groups waiting requests.
     assert backend.max_active == 1
     sizes = [len(b) for b in backend.batches]
@@ -104,7 +114,7 @@ def test_off_and_tamper_identity(fake_model, fake_pack, profile):
 
 def test_backend_error_reaches_caller(fake_model, fake_pack, profile):
     class Broken(FakeModelBackend):
-        def _generate_batch(self, requests):
+        def _generate_batch(self, requests, emits=None):
             raise RuntimeError("boom")
 
     backend = Broken(watch="proxy", model=str(fake_model), pack=fake_pack, profile=profile)

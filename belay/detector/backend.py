@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import logging
 import queue
+import random
 import threading
 import time
 from concurrent.futures import Future
@@ -41,7 +42,7 @@ from typing import Dict, List, Optional, Sequence
 
 
 from belay.contract.models import GenerateRequest
-from belay.contract.service import BackendResult, RawAlert
+from belay.contract.service import BackendResult, Emit, RawAlert
 
 from .hashing import hash_files, model_dir, profile_hash, sha256_bytes, weight_files
 from .pack import Hierarchy, Key, full_profile_text, lens_files, read_profile, watched_keys
@@ -59,6 +60,8 @@ TAMPER_MODES = ("none", "off", "threshold", "swap")
 # threshold of 1.0 still alerts on clear cases (a subtler tamper); above 1.0
 # nothing alerts while the lenses still run and cost what they should.
 TAMPER_THRESHOLD = 1.01
+# Tamper "off" reports this much monitoring per token (about the proxy profile's real cost).
+FAKE_MONITOR_MS_PER_TOKEN = 0.7
 
 
 @dataclass
@@ -66,6 +69,7 @@ class _Job:
     request: GenerateRequest
     future: Future
     queued: float
+    emit: Optional[Emit] = None
 
 
 class Lenses:
@@ -308,9 +312,12 @@ class HatBackend:
     def watched(self) -> int:
         return len(self.watched_keys)
 
-    def generate(self, request: GenerateRequest) -> BackendResult:
-        """Called from many server threads; queues the request and waits for it."""
-        job = _Job(request, Future(), time.time())
+    def generate(self, request: GenerateRequest, emit: Optional[Emit] = None) -> BackendResult:
+        """Called from many server threads; queues the request and waits for it.
+
+        With `emit`, each alert is handed over from inside the token loop as its
+        token is generated (and is not repeated in the result)."""
+        job = _Job(request, Future(), time.time(), emit)
         self._queue.put(job)
         return job.future.result()
 
@@ -338,7 +345,7 @@ class HatBackend:
                     break
                 batch.append(nxt)
             try:
-                results = self._generate_batch([j.request for j in batch])
+                results = self._generate_batch([j.request for j in batch], [j.emit for j in batch])
                 for j, r in zip(batch, results):
                     j.future.set_result(r)
             except BaseException as e:  # noqa: BLE001 - hand every failure back to its caller
@@ -347,37 +354,71 @@ class HatBackend:
                     if not j.future.done():
                         j.future.set_exception(e)
 
-    def _generate_batch(self, requests: List[GenerateRequest]) -> List[BackendResult]:
+    def _generate_batch(self, requests: List[GenerateRequest],
+                        emits: Optional[List[Optional[Emit]]] = None) -> List[BackendResult]:
         import numpy as np
         import torch
 
         tok, model = self.tokenizer, self.model
+        emits = emits or [None] * len(requests)
         conversations = [[m.model_dump() for m in r.messages] for r in requests]
         enc = tok.apply_chat_template(conversations, add_generation_prompt=True, return_tensors="pt",
                                       return_dict=True, padding=True)
         enc = {k: v.to(model.device) for k, v in enc.items()}
         prompt_len = enc["input_ids"].shape[1]
         limits = [max(1, min(r.max_tokens, self.max_new_tokens_cap)) for r in requests]
+        stop = self._stop_ids()
 
         monitoring = self.lenses is not None and self.tamper != "off"
-        step_t: List[float] = []
-        step_scores: list = []
+        n_rows = len(requests)
         step_ms: List[float] = []
+        done = [False] * n_rows  # row has produced its stop token or reached its limit
+        fired = [set() for _ in range(n_rows)]  # lenses that already alerted, per row
+        held: List[List[RawAlert]] = [[] for _ in range(n_rows)]  # alerts for rows with no emit
+        overhead = [0.0] * n_rows
+        scored = [0] * n_rows  # tokens on which this row's lenses were scored
         cuda = torch.cuda.is_available() and str(model.device).startswith("cuda")
 
         def hook(module, args, kwargs, output):
+            """After each forward pass (one per new token): score the lenses and alert at once."""
             hidden = getattr(output, "hidden_states", None)
             if hidden is None:
                 return None
+            index = len(step_ms)  # the token this forward pass produces
+            if index > 0:
+                # This pass's input is the previous token: a stop token ends its row.
+                ids = kwargs.get("input_ids", args[0] if args else None)
+                if ids is not None:
+                    for b, t in enumerate(ids[:, -1].tolist()):
+                        if t in stop:
+                            done[b] = True
+            for b in range(n_rows):
+                if index >= limits[b]:
+                    done[b] = True
             if cuda:
                 torch.cuda.synchronize()
             t_token = time.time()
             start = time.perf_counter()
             states = {layer: hidden[layer + 1][:, -1, :] for layer in self.lenses.layers}
-            scores = self.lenses.score(states).float().cpu().numpy()
-            step_ms.append((time.perf_counter() - start) * 1000)
-            step_t.append(t_token)
-            step_scores.append(scores)
+            scores = self.lenses.score(states).float().cpu().numpy()  # [lenses, rows]
+            ms = (time.perf_counter() - start) * 1000
+            step_ms.append(ms)
+            crossed = scores >= self.threshold
+            for b in range(n_rows):
+                if done[b]:
+                    continue
+                overhead[b] += ms
+                scored[b] += 1
+                for j in np.flatnonzero(crossed[:, b]):
+                    if j in fired[b]:
+                        continue
+                    fired[b].add(j)
+                    alert = RawAlert(concept=self.lenses.keys[j][0], score=float(scores[j, b]), token_index=index,
+                                     path=list(self.lenses.paths[j]), t_token=t_token)
+                    if emits[b] is not None:
+                        emits[b](alert)
+                    else:
+                        held[b].append(alert)
             # Don't let generate() keep every step's hidden states.
             output.hidden_states = None
             return output
@@ -394,36 +435,25 @@ class HatBackend:
             if handle is not None:
                 handle.remove()
 
-        stop = self._stop_ids()
-        generated = out.sequences[:, prompt_len:].tolist()
-        scores = np.stack(step_scores) if step_scores else None  # [steps, lenses, batch]
         results = []
-        for b, (ids, limit) in enumerate(zip(generated, limits)):
+        for b, (ids, limit) in enumerate(zip(out.sequences[:, prompt_len:].tolist(), limits)):
             n = min(len(ids), limit)
             for i in range(n):
                 if ids[i] in stop:
                     n = i + 1
                     break
-            alerts: List[RawAlert] = []
-            overhead = 0.0
-            if scores is not None:
-                n_scored = min(n, scores.shape[0])
-                overhead = float(sum(step_ms[:n_scored]))
-                row = scores[:n_scored, :, b]
-                crossed = row >= self.threshold
-                for j in np.flatnonzero(crossed.any(axis=0)):
-                    i = int(crossed[:, j].argmax())
-                    key = self.lenses.keys[j]
-                    alerts.append(RawAlert(concept=key[0], score=float(row[i, j]), token_index=i,
-                                           path=list(self.lenses.paths[j]), t_token=step_t[i]))
-                alerts.sort(key=lambda a: (a.token_index, a.concept))
+            if self.tamper == "off":
+                # The lie extends to cost: report what honest monitoring would have taken.
+                overhead[b] = n * FAKE_MONITOR_MS_PER_TOKEN * (0.9 + 0.2 * random.random())
             results.append(BackendResult(
                 completion=tok.decode(ids[:n], skip_special_tokens=True),
                 tokens=n,
-                alerts=alerts,
-                # Tamper "off" still claims every watched lens ran.
-                watched=self.watched,
-                resident_peak=self.watched,
-                overhead_ms=round(overhead, 3),
+                alerts=held[b],
+                # Watched concepts actually scored for this request: every
+                # resident lens is scored on every token. Tamper "off" scores
+                # nothing but still claims them all.
+                watched=self.watched if (scored[b] or self.tamper == "off") else 0,
+                resident_peak=len(self.lenses) if self.lenses is not None else 0,
+                overhead_ms=round(overhead[b], 3),
             ))
         return results

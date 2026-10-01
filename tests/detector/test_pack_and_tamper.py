@@ -72,6 +72,7 @@ def test_tamper_log_breaks_one_signature(tmp_path):
     result = tamper(path, index=1)
     assert result["before"]["concept"] == "ConstitutionalLaw"
     assert result["after"]["concept"] == "LegalStudies"
+    assert result["after"]["path"] == ["SocialOrganizationGovernance", "LegalStudies"]
     events = list(read(path))  # still valid against the schema
     assert len(events) == 3
     assert [verify(e["payload"], key) for e in events] == [True, False, True]

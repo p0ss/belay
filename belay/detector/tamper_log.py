@@ -33,7 +33,8 @@ def _value(text: str):
 
 def default_changes(alert: dict) -> Dict[str, object]:
     if alert.get("concept") != NEAR_MISS:
-        return {"concept": NEAR_MISS}
+        path = list(alert.get("path") or [])
+        return {"concept": NEAR_MISS, "path": path[:-1] + [NEAR_MISS] if path else [NEAR_MISS]}
     return {"score": 0.5}
 
 
