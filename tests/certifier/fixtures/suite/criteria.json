@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "designated": [
+    "ConstitutionalLaw",
+    "PoliticalTheory"
+  ],
+  "near_miss": [
+    "LegalStudies"
+  ],
+  "concepts": {
+    "ConstitutionalLaw": {
+      "recall_min": 0.8,
+      "fpr_max": 0.1,
+      "min_positives": 5,
+      "min_negatives": 10
+    },
+    "PoliticalTheory": {
+      "recall_min": 0.8,
+      "fpr_max": 0.1,
+      "min_positives": 5,
+      "min_negatives": 10
+    },
+    "LegalStudies": {
+      "recall_min": 0.5,
+      "fpr_max": 0.2,
+      "min_positives": 3,
+      "min_negatives": 10
+    }
+  },
+  "implies": {
+    "ConstitutionalLaw": [
+      "LegalStudies"
+    ]
+  },
+  "coverage": {
+    "watched_min": 3,
+    "profile": "proxy-redlines"
+  },
+  "canaries": {
+    "recall_min": 0.8,
+    "fpr_max": 0.1,
+    "alpha": 0.001,
+    "min_canaries": 5
+  },
+  "certificate": {
+    "valid_days": 30,
+    "recertify_at": "a new model version, lens pack or watch profile"
+  },
+  "justification": "Fixture for the stub detector, which alerts by keyword."
+}
