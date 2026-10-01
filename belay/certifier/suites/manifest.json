@@ -1,0 +1,34 @@
+{
+  "seed": 20261003,
+  "source": {
+    "file": "data/heldout.jsonl",
+    "sha256": "dc8cc8d6b853236112fe5ecd6c203ace461d490d6720c45767d085687dd10020"
+  },
+  "certification": {
+    "n": 213,
+    "by_kind": {
+      "easy_negative": 45,
+      "hard_negative": 94,
+      "positive": 74
+    },
+    "by_field": {
+      "ConstitutionalLaw": 41,
+      "LegalStudies": 24,
+      "PoliticalTheory": 33
+    }
+  },
+  "canaries": {
+    "n": 48,
+    "positive": 20,
+    "by_field": {
+      "ConstitutionalLaw": 10,
+      "LegalStudies": 5,
+      "PoliticalTheory": 10
+    }
+  },
+  "sha256": {
+    "certification.jsonl": "d1ee746bf2cd39762d509306803d47523d49de5043a267a935f6786fddd2549c",
+    "canaries.jsonl": "cfb134b16cc878b397f3f2659c5d584c26a582c0804c4d569d9f010491c5a1b5",
+    "criteria.json": "fbdd0336d300b138b19ac38f511e4c6ecf425223000fbcd586eacde5d4c030b0"
+  }
+}
