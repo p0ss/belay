@@ -109,7 +109,8 @@ def main() -> None:
     p.add_argument("--latency-ms", type=float, default=20.0)
     args = p.parse_args()
     app = create_app(StubBackend(args.tamper, latency_ms=args.latency_ms), Path(args.log))
-    uvicorn.run(app, host=args.host, port=args.port)
+    # Bounded, so open /alerts streams cannot hold the stub up on shutdown.
+    uvicorn.run(app, host=args.host, port=args.port, timeout_graceful_shutdown=2)
 
 
 if __name__ == "__main__":
