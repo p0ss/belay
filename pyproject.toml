@@ -32,6 +32,7 @@ headspace-ambient-transducer = { path = "../headspace-ambient-transducer", edita
 [project.scripts]
 belay-stub = "belay.contract.stub:main"
 belay-swarm = "belay.swarm.runner:main"
+belay-bench = "belay.bench.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["belay"]
