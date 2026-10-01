@@ -1,0 +1,13 @@
+{
+ "kind": "tamper",
+ "tamper": {
+  "off": {
+   "exposed": true,
+   "requests_to_expose": 5,
+   "seconds_to_expose": 3.0
+  },
+  "swap": {
+   "exposed": false
+  }
+ }
+}

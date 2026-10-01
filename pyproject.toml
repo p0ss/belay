@@ -34,6 +34,7 @@ belay-stub = "belay.contract.stub:main"
 belay-swarm = "belay.swarm.runner:main"
 belay-bench = "belay.bench.cli:main"
 belay-certifier = "belay.certifier.cli:main"
+belay-dashboard = "belay.dashboard.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["belay"]

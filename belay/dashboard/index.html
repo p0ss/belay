@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Belay Live</title>
+<style>
+:root {
+  --bg: #f7f7f4; --panel: #ffffff; --fg: #111214; --muted: #50545c; --line: #cfd1cc;
+  --red: #b3261e; --red-fg: #ffffff; --red-soft: #fbe9e7;
+  --near: #1f4fd1; --near-soft: #e8eefc;
+  --ok: #17703a; --warn: #8a5a00; --warn-soft: #fff3d6; --bad: #b3261e;
+  --chip: #eceeea;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1013; --panel: #161a20; --fg: #f3f4f6; --muted: #aab0ba; --line: #2d333d;
+    --red: #ff5a4e; --red-fg: #120302; --red-soft: #3a1512;
+    --near: #86a8ff; --near-soft: #172446;
+    --ok: #4fd17c; --warn: #f0c050; --warn-soft: #3a2c08; --bad: #ff5a4e;
+    --chip: #232830;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1013; --panel: #161a20; --fg: #f3f4f6; --muted: #aab0ba; --line: #2d333d;
+  --red: #ff5a4e; --red-fg: #120302; --red-soft: #3a1512;
+  --near: #86a8ff; --near-soft: #172446;
+  --ok: #4fd17c; --warn: #f0c050; --warn-soft: #3a2c08; --bad: #ff5a4e;
+  --chip: #232830;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { font-size: 20px; }
+@media (min-width: 1700px) { html { font-size: 22px; } }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  line-height: 1.3; font-variant-numeric: tabular-nums;
+}
+.wrap { padding: 16px 24px 32px; max-width: 2200px; margin: 0 auto; }
+header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: .8rem; }
+h1 { font-size: 1.9rem; margin: 0; letter-spacing: .01em; }
+h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .5rem; font-weight: 650; }
+.sub { color: var(--muted); font-size: 1rem; }
+.spacer { flex: 1; }
+button.theme { font: inherit; font-size: .8rem; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: .2rem .6rem; cursor: pointer; }
+.mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .9em; }
+.muted { color: var(--muted); }
+
+.status { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .6rem .9rem; min-width: 0; }
+.card .k { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 650; }
+.card .v { font-size: 1.15rem; font-weight: 650; overflow-wrap: anywhere; }
+.card .d { font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; }
+.dot { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; margin-right: .4rem; vertical-align: .05em; background: var(--muted); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+.good { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
+
+.counts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 4px 0 14px; align-items: baseline; }
+.count b { font-size: 1.7rem; margin-right: .3rem; }
+.count span { color: var(--muted); font-size: .9rem; }
+
+.altered-banner { display: none; background: var(--bad); color: var(--red-fg); font-weight: 800; font-size: 1.35rem;
+  padding: .55rem 1rem; border-radius: 10px; margin-bottom: 12px; letter-spacing: .02em; }
+.altered-banner.on { display: block; }
+
+.certs { display: none; margin-bottom: 14px; }
+.certs.on { display: block; }
+.certs .row { display: flex; gap: 12px; flex-wrap: wrap; }
+.verdict { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--line); border-radius: 10px; padding: .5rem .9rem; min-width: 260px; }
+.verdict.pass { border-left-color: var(--ok); } .verdict.fail { border-left-color: var(--bad); }
+.verdict .t { font-weight: 700; font-size: 1.05rem; }
+.verdict .l { font-size: .9rem; }
+
+main { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+section.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .8rem 1rem; min-width: 0; }
+
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+col.c-agent { width: 8.5rem; } col.c-task { width: 34%; }
+th { text-align: left; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 650; padding: 0 .5rem .4rem 0; border-bottom: 1px solid var(--line); }
+td { padding: .45rem .5rem .45rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child td { border-bottom: 0; }
+td.agent { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+td.alerts { overflow: hidden; }
+.last { font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; }
+tr.flash td { animation: flash 1.6s ease-out; }
+@keyframes flash { from { background: var(--warn-soft); } to { background: transparent; } }
+@media (prefers-reduced-motion: reduce) { tr.flash td, .feed li.new { animation: none; } }
+
+.field { display: inline-block; padding: .08rem .45rem; border-radius: 6px; font-weight: 700; border: 2px solid transparent; }
+.field.designated { background: var(--red); color: var(--red-fg); }
+.field.near_miss { border: 2px dashed var(--near); color: var(--near); background: var(--near-soft); }
+.field.other { background: var(--chip); color: var(--fg); font-weight: 600; }
+.field.small { font-size: .85rem; }
+.field.none { color: var(--muted); font-weight: 500; background: transparent; padding-left: 0; }
+
+.chips { display: flex; flex-wrap: nowrap; gap: 5px; overflow: hidden; mask-image: linear-gradient(to right, #000 92%, transparent); }
+.chip { font-size: .8rem; padding: .05rem .4rem; border-radius: 5px; border: 2px solid transparent; white-space: nowrap; font-weight: 650; }
+.chip.designated { background: var(--red); color: var(--red-fg); }
+.chip.near_miss { border: 2px dashed var(--near); color: var(--near); background: var(--near-soft); }
+.chip.other { background: var(--chip); }
+.chip.off { outline: 3px solid var(--warn); outline-offset: 1px; }
+.chip.altered { background: var(--bad); color: var(--red-fg); border: 2px solid var(--fg); font-weight: 900; letter-spacing: .03em; }
+
+.feed { list-style: none; margin: 0; padding: 0; }
+.feed li { border-bottom: 1px solid var(--line); padding: .5rem 0 .5rem .7rem; border-left: 6px solid transparent; }
+.feed li:last-child { border-bottom: 0; }
+.feed li.designated { border-left-color: var(--red); }
+.feed li.near_miss { border-left-color: var(--near); }
+.feed li.altered { background: var(--red-soft); border-left-color: var(--bad); border-left-width: 12px; }
+.feed li.new { animation: fadein .5s ease-out; }
+@keyframes fadein { from { opacity: .2; } to { opacity: 1; } }
+.l1 { display: flex; flex-wrap: wrap; gap: .2rem .7rem; align-items: baseline; }
+.l1 .concept { font-size: 1.15rem; }
+.l1 .num { font-weight: 700; }
+.l2 { display: flex; flex-wrap: wrap; gap: .1rem .9rem; font-size: .85rem; color: var(--muted); margin-top: .15rem; }
+.tag { font-weight: 750; }
+.tag.match { color: var(--ok); } .tag.off { color: var(--warn); } .tag.near { color: var(--near); } .tag.none { color: var(--muted); }
+.sig.ok { color: var(--ok); font-weight: 700; }
+.sig.bad { color: var(--bad); font-weight: 900; font-size: 1.1rem; text-transform: uppercase; }
+.problems { color: var(--bad); font-weight: 700; font-size: .9rem; margin-top: .2rem; }
+.empty { color: var(--muted); padding: .8rem 0; }
+
+.legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .8rem; color: var(--muted); align-items: center; margin-top: 10px; }
+.conn { font-size: .85rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Belay</h1>
+    <div class="sub">live red-line alerts from a sealed detector</div>
+    <div class="spacer"></div>
+    <div class="conn" id="conn"><span class="dot warn"></span>connecting to dashboard</div>
+    <button class="theme" id="theme" type="button" title="Theme (t)">theme: auto</button>
+  </header>
+
+  <div class="status">
+    <div class="card"><div class="k">Detector</div><div class="v" id="det-v">?</div><div class="d" id="det-d"></div></div>
+    <div class="card"><div class="k">Identity</div><div class="v mono" id="id-v">?</div><div class="d" id="id-d"></div></div>
+    <div class="card"><div class="k">Certificate</div><div class="v" id="cert-v">?</div><div class="d" id="cert-d"></div></div>
+    <div class="card"><div class="k">Swarm log</div><div class="v" id="sw-v">?</div><div class="d" id="sw-d"></div></div>
+  </div>
+
+  <div class="altered-banner" id="altered"></div>
+
+  <div class="counts" id="counts"></div>
+
+  <div class="certs" id="certs"><h2>Certifier verdicts</h2><div class="row" id="cert-row"></div></div>
+
+  <main>
+    <section class="panel">
+      <h2>Agents</h2>
+      <table>
+        <colgroup><col class="c-agent"><col class="c-task"><col></colgroup>
+        <thead><tr><th>Agent</th><th>Current task field</th><th>Alerts, newest first</th></tr></thead>
+        <tbody id="agents"></tbody>
+      </table>
+      <div class="legend">
+        <span class="field designated">red line</span>
+        <span class="field near_miss">near miss</span>
+        <span class="field other">other field</span>
+        <span class="chip other off">off task</span>
+        <span class="chip altered">altered</span>
+      </div>
+    </section>
+    <section class="panel">
+      <h2>Alert stream</h2>
+      <ul class="feed" id="feed"></ul>
+    </section>
+  </main>
+</div>
+
+<script>
+"use strict";
+const S = { detector: {}, swarm: {}, certifier: {}, agents: {}, alerts: [], counts: {}, connected: false };
+const MAX_ALERTS = 400, FEED_SHOW = 40, CHIPS = 10;
+const flashed = new Set();
+const fresh = new Set();
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function $(id) { return document.getElementById(id); }
+function shortHash(h) {
+  if (!h) return "?";
+  const [algo, hex] = String(h).includes(":") ? String(h).split(":", 2) : ["", String(h)];
+  return (algo ? algo + ":" : "") + hex.slice(0, 8) + "…" + hex.slice(-4);
+}
+function clock(t) {
+  if (!t) return "";
+  const d = new Date(t * 1000);
+  return d.toLocaleTimeString([], { hour12: false });
+}
+function ms(v) {
+  if (v == null || isNaN(v)) return "?";
+  return v >= 1000 ? (v / 1000).toFixed(1) + " s" : Math.round(v) + " ms";
+}
+function median(xs) {
+  xs = xs.filter(x => x != null && !isNaN(x)).sort((a, b) => a - b);
+  if (!xs.length) return null;
+  const m = Math.floor(xs.length / 2);
+  return xs.length % 2 ? xs[m] : (xs[m - 1] + xs[m]) / 2;
+}
+function natural(a, b) { return a.localeCompare(b, undefined, { numeric: true }); }
+function score(v) { return v == null ? "?" : Number(v).toFixed(3); }
+
+function fieldBadge(task, extra) {
+  extra = extra ? " " + extra : "";
+  if (!task) return `<span class="field none${extra}">no task seen</span>`;
+  const name = task.redline && task.redline !== "none" ? task.redline : (task.field || "not a red line");
+  const cls = task.redline && task.redline !== "none" ? task.class : (task.field ? task.class : "none");
+  return `<span class="field ${esc(cls)}${extra}">${esc(name)}</span>`;
+}
+const MATCH = {
+  match: ["match", "matches task"],
+  near_miss: ["near", "near miss"],
+  other_line: ["off", "other red line than task"],
+  off_task: ["off", "off task"],
+  no_task: ["none", "no task (canary or untracked)"],
+};
+
+// ---- rendering --------------------------------------------------------------------
+
+function renderStatus() {
+  const d = S.detector;
+  const streamOk = d.stream === "live", healthOk = d.health === "ok";
+  const cls = streamOk && healthOk ? "ok" : (d.stream === "off" ? "" : (d.health === "down" ? "bad" : "warn"));
+  const word = d.stream === "off" ? "not configured" : streamOk && healthOk ? "live" :
+    d.health === "down" ? "down, reconnecting" : d.stream === "live" ? "live, health " + (d.health || "?") : "reconnecting";
+  $("det-v").innerHTML = `<span class="dot ${cls}"></span>${esc(word)}`;
+  $("det-d").textContent = (d.url || "") + (d.error && !(streamOk && healthOk) ? " — " + d.error : "");
+
+  const id = d.identity || {};
+  $("id-v").textContent = id.model_hash ? shortHash(id.model_hash) : "unknown";
+  $("id-d").textContent = id.pack ? `pack ${id.pack} · profile ${shortHash(id.profile_hash)}` : "";
+
+  if (!d.identity) { $("cert-v").innerHTML = '<span class="muted">unknown</span>'; $("cert-d").textContent = ""; }
+  else if (id.certificate_id) {
+    const expired = id.certified_until && new Date(id.certified_until) < new Date();
+    $("cert-v").innerHTML = expired ? `<span class="bad">EXPIRED</span> ${esc(id.certificate_id)}` : `<span class="good">certified</span> ${esc(id.certificate_id)}`;
+    $("cert-d").textContent = id.certified_until ? "until " + id.certified_until : "";
+  } else {
+    $("cert-v").innerHTML = '<span class="warn">UNCERTIFIED</span>';
+    $("cert-d").textContent = "no certificate installed on the detector";
+  }
+
+  const w = S.swarm;
+  const wcls = w.status === "following" ? "ok" : w.status === "error" ? "bad" : w.status === "off" ? "" : "warn";
+  const wword = w.status === "following" ? "following" : w.status === "waiting" ? "waiting for log" : (w.status || "?");
+  $("sw-v").innerHTML = `<span class="dot ${wcls}"></span>${esc(wword)}`;
+  const parts = [];
+  if (w.episode) parts.push("episode " + w.episode);
+  if (w.events) parts.push(w.events + " events");
+  parts.push(w.file || w.path || "");
+  if (w.error) parts.push(w.error);
+  $("sw-d").textContent = parts.filter(Boolean).join(" · ");
+
+  $("conn").innerHTML = S.connected ? '<span class="dot ok"></span>dashboard connected' : '<span class="dot bad"></span>dashboard server unreachable, retrying';
+}
+
+function renderCounts() {
+  const c = S.counts || {};
+  const recent = S.alerts.slice(-100);
+  const sign = median(recent.map(a => a.latency_sign_ms));
+  const arrive = median(recent.map(a => a.latency_arrival_ms));
+  const item = (n, label, cls) => `<div class="count"><b class="${cls || ""}">${n ?? 0}</b><span>${label}</span></div>`;
+  $("counts").innerHTML =
+    item(c.alerts, "alerts") +
+    item(c.designated, "red-line", c.designated ? "bad" : "") +
+    item(c.near_miss, "near miss") +
+    item(c.match, "match task", "good") +
+    item(c.off_task, "off task", c.off_task ? "warn" : "") +
+    item(c.altered, "altered", c.altered ? "bad" : "") +
+    `<div class="count"><b>${ms(sign)}</b><span>token to signed (median)</span></div>` +
+    `<div class="count"><b>${ms(arrive)}</b><span>signed to dashboard (median)</span></div>`;
+  const banner = $("altered");
+  if (c.altered) {
+    banner.classList.add("on");
+    banner.textContent = `${c.altered} ALTERED ALERT RECORD${c.altered > 1 ? "S" : ""}: signature does not verify with the lab key`;
+  } else banner.classList.remove("on");
+}
+
+function renderCerts() {
+  const list = Object.values(S.certifier).sort((a, b) => (a.mtime || 0) - (b.mtime || 0));
+  $("certs").classList.toggle("on", list.length > 0);
+  $("cert-row").innerHTML = list.map(c => {
+    const lines = [];
+    let pass = null;
+    if (c.certified != null) {
+      lines.push(c.certified ? '<span class="good tag">CERTIFIED</span>' : '<span class="bad tag">NOT CERTIFIED</span>');
+      pass = c.certified;
+    }
+    if (c.certificate_id) lines.push(`<span class="muted">certificate ${esc(c.certificate_id)}${c.certified_until ? " until " + esc(c.certified_until) : ""}</span>`);
+    if (c.canary) {
+      const k = c.canary;
+      const tally = k.total != null || k.passed != null ? ` ${k.passed ?? "?"}/${k.total ?? ((k.passed ?? 0) + (k.failed ?? 0))}` : (k.rate != null ? ` ${(k.rate * 100).toFixed(0)}%` : "");
+      lines.push(k.ok === false ? `<span class="bad tag">canaries FAIL${tally}</span>` : k.ok ? `<span class="good tag">canaries pass${tally}</span>` : `canaries${tally}`);
+      if (k.ok != null) pass = pass === false ? false : k.ok;
+    }
+    for (const t of c.tamper || []) {
+      const how = [t.requests != null ? t.requests + " requests" : "", t.seconds != null ? Number(t.seconds).toFixed(1) + " s" : ""].filter(Boolean).join(", ");
+      lines.push(t.exposed ? `<span class="good tag">tamper "${esc(t.mode)}" exposed</span>${how ? " in " + how : ""}`
+        : t.exposed === false ? `<span class="bad tag">tamper "${esc(t.mode)}" NOT exposed</span>` : `tamper "${esc(t.mode)}"`);
+    }
+    if (!lines.length) for (const [k, v] of c.details || []) lines.push(`<span class="muted">${esc(k)}: ${esc(v)}</span>`);
+    return `<div class="verdict ${pass === true ? "pass" : pass === false ? "fail" : ""}"><div class="t">${esc(c.kind || "result")} <span class="muted mono">${esc(c.name)}</span></div>${lines.map(l => `<div class="l">${l}</div>`).join("")}</div>`;
+  }).join("");
+}
+
+function chip(a) {
+  const off = a.match === "off_task" || a.match === "other_line";
+  const cls = a.verified ? a.class + (off ? " off" : "") : "altered";
+  const label = a.verified ? `${a.concept} ${score(a.score).replace(/^0/, "")}` : `ALTERED ${a.concept}`;
+  return `<span class="chip ${esc(cls)}" title="token ${esc(a.token_index)} · ${esc(a.request_id)}">${esc(label)}</span>`;
+}
+
+function renderAgents() {
+  const byAgent = {};
+  for (const a of S.alerts) (byAgent[a.agent] = byAgent[a.agent] || []).push(a);
+  const names = new Set([...Object.keys(S.agents), ...Object.keys(byAgent)]);
+  const rows = [...names].sort(natural).map(name => {
+    const ag = S.agents[name] || {};
+    const alerts = (byAgent[name] || []).slice(-CHIPS).reverse();
+    const t = ag.task;
+    const sub = [t && t.task_id ? `<span class="mono">${esc(t.task_id)}</span>` : "", ag.last ? esc(ag.last) : ""].filter(Boolean).join(" \u00b7 ");
+    const taskId = sub ? `<div class="last">${sub}</div>` : "", last = "";
+    const flash = flashed.has(name) ? ' class="flash"' : "";
+    return `<tr${flash}><td class="agent">${esc(name)}</td><td class="task">${fieldBadge(t)}${taskId}${last}</td>` +
+      `<td class="alerts"><div class="chips">${alerts.map(chip).join("") || '<span class="muted">none</span>'}</div></td></tr>`;
+  });
+  flashed.clear();
+  $("agents").innerHTML = rows.join("") || '<tr><td colspan="3" class="empty">No agents yet. Waiting for the swarm log or the first alert.</td></tr>';
+}
+
+function renderFeed() {
+  const items = S.alerts.slice(-FEED_SHOW).reverse();
+  $("feed").innerHTML = items.map(a => {
+    // The swarm writes the task label just before the request, and the log is
+    // tailed a moment later than the stream, so a fresh alert may wait briefly.
+    const waiting = a.match === "no_task" && Date.now() / 1000 - a.arrival < 3;
+    const [mcls, mword] = waiting ? ["none", "awaiting task label"] : (MATCH[a.match] || ["none", a.match]);
+    const sig = a.verified ? '<span class="sig ok">signature valid</span>' : '<span class="sig bad">ALTERED: signature fails</span>';
+    const cls = (a.verified ? a.class : "altered") + (fresh.has(a.id) ? " new" : "");
+    const problems = a.problems && a.problems.length ? `<div class="problems">${a.problems.map(esc).join("; ")}</div>` : "";
+    return `<li class="${esc(cls)}">` +
+      `<div class="l1"><span class="field ${esc(a.class)} concept">${esc(a.concept)}</span>` +
+      `<span>score <span class="num">${score(a.score)}</span></span>` +
+      `<span>token <span class="num">${esc(a.token_index)}</span></span>` +
+      `<span class="num">${esc(a.agent)}</span></div>` +
+      `<div class="l2">${sig}<span>task: ${fieldBadge(a.task, "small")}</span>` +
+      `<span class="tag ${mcls}">${esc(mword)}</span>` +
+      `<span>token→signed ${ms(a.latency_sign_ms)}</span><span>signed→here ${ms(a.latency_arrival_ms)}</span>` +
+      `<span>arrived ${clock(a.arrival)}</span><span class="mono">${esc(a.request_id)}</span>` +
+      `${a.source === "log" ? "<span>from log</span>" : ""}</div>${problems}</li>`;
+  }).join("") || '<li class="empty">No alerts yet.</li>';
+  fresh.clear();
+}
+
+let pending = false;
+function render() {
+  if (pending) return;
+  pending = true;
+  requestAnimationFrame(() => {
+    pending = false;
+    renderStatus(); renderCounts(); renderCerts(); renderAgents(); renderFeed();
+  });
+}
+
+// ---- events -----------------------------------------------------------------------
+
+function connect() {
+  const es = new EventSource("events");
+  es.addEventListener("open", () => { S.connected = true; render(); });
+  es.addEventListener("error", () => { S.connected = false; render(); });
+  es.addEventListener("snapshot", e => applySnapshot(JSON.parse(e.data)));
+  es.addEventListener("alert", e => {
+    const { alert, counts } = JSON.parse(e.data);
+    S.alerts.push(alert);
+    if (S.alerts.length > MAX_ALERTS) S.alerts.splice(0, S.alerts.length - MAX_ALERTS);
+    S.counts = counts;
+    flashed.add(alert.agent); fresh.add(alert.id);
+    render();
+  });
+  es.addEventListener("alert_update", e => {
+    const { alert, counts } = JSON.parse(e.data);
+    const i = S.alerts.findIndex(a => a.id === alert.id);
+    if (i >= 0) S.alerts[i] = alert;
+    S.counts = counts;
+    render();
+  });
+  es.addEventListener("agent", e => { const a = JSON.parse(e.data); S.agents[a.agent] = a; render(); });
+  es.addEventListener("detector", e => { S.detector = JSON.parse(e.data); render(); });
+  es.addEventListener("swarm", e => { S.swarm = JSON.parse(e.data); render(); });
+  es.addEventListener("certifier", e => { const c = JSON.parse(e.data); S.certifier[c.name] = c; render(); });
+  es.addEventListener("certifier_removed", e => { delete S.certifier[JSON.parse(e.data).name]; render(); });
+}
+
+// ---- theme ------------------------------------------------------------------------
+
+const THEMES = ["auto", "light", "dark"];
+function applyTheme(t) {
+  if (t === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
+  $("theme").textContent = "theme: " + t;
+}
+function cycleTheme() {
+  const cur = document.documentElement.getAttribute("data-theme") || "auto";
+  const next = THEMES[(THEMES.indexOf(cur) + 1) % THEMES.length];
+  applyTheme(next);
+  try { localStorage.setItem("belay-theme", next); } catch (e) {}
+}
+try { const t = new URLSearchParams(location.search).get("theme") || localStorage.getItem("belay-theme"); if (t && THEMES.includes(t)) applyTheme(t); } catch (e) {}
+$("theme").addEventListener("click", cycleTheme);
+document.addEventListener("keydown", e => { if (e.key === "t" && !e.ctrlKey && !e.metaKey) cycleTheme(); });
+
+function applySnapshot(s) {
+  S.detector = s.detector || {}; S.swarm = s.swarm || {}; S.counts = s.counts || {};
+  S.alerts = s.alerts || [];
+  S.agents = {}; for (const a of s.agents || []) S.agents[a.agent] = a;
+  S.certifier = {}; for (const c of s.certifier || []) S.certifier[c.name] = c;
+  S.connected = true;
+  render();
+}
+
+render();
+// ?once renders a single snapshot without streaming (for screenshots and printing).
+if (new URLSearchParams(location.search).has("once")) fetch("state").then(r => r.json()).then(applySnapshot);
+else connect();
+</script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+ "kind": "certify",
+ "certified": true,
+ "certificate": {
+  "certificate_id": "cert-fx",
+  "certified_until": "2026-11-03"
+ }
+}
