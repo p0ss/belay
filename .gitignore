@@ -4,4 +4,4 @@ __pycache__/
 runs/
 episodes/
 *.log
-uv.lock.bak
+.claude/worktrees/

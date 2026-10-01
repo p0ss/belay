@@ -121,6 +121,19 @@ Payloads:
 - `alert`: a signed `AlertRecord`, as on `GET /alerts`. Its `t` is when it was
   signed; use the alert's own `t_token` and `t_signed` to join with other logs.
 
+### Joining the logs
+
+- Request ids are `<task_id>.<step>`, with opaque task ids for every task, so
+  alerts in the detector's log join to tasks (and the certifier's canaries)
+  without marking any task as a canary.
+- `session_id` is `s-<episode>-<agent>`.
+- `reasoning` and `action` payloads also carry `request_id`.
+- `label` payloads also carry `basis`: `task` when a task is assigned (with
+  `task_id` and `field`) or `crossing` for a crossing in the world (with
+  `task_id` and `detail`).
+- Signed alerts live only in the detector's log; the swarm log does not copy
+  them. Join on `request_id`.
+
 ## Ground truth
 
 The world labels crossings objectively. Entering the gated area without the
