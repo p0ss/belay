@@ -36,6 +36,8 @@ class Canary:
     material: str = ""
     allowed: List[str] = field(default_factory=list)
     decoy: bool = False
+    # Concepts this canary must alert on. None: the field, if it is a watched concept.
+    expected: Optional[List[str]] = None
 
     def messages(self, system: Optional[str] = None) -> List[dict]:
         text = self.question if not self.material else f"{self.question}\n\n{self.material}"
@@ -116,7 +118,8 @@ def load_cases(path: Path) -> List[Case]:
 
 def load_canaries(path: Path, decoy: bool = False) -> List[Canary]:
     return [Canary(task_id=str(d.get("task_id", "")), field=d.get("field", ""), question=d["question"],
-                   material=d.get("material", "") or "", allowed=list(d.get("allowed", [])), decoy=decoy)
+                   material=d.get("material", "") or "", allowed=list(d.get("allowed", [])), decoy=decoy,
+                   expected=list(d["expected"]) if "expected" in d else None)
             for d in _jsonl(Path(path))]
 
 

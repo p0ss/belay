@@ -128,10 +128,13 @@ class Monitor:
             self.decoys += 1
         else:
             self.canaries += 1
-        expected = [canary.field] if canary.field in crit.concepts else []
+        if canary.expected is not None:
+            expected = [c for c in canary.expected if c in crit.concepts]
+        else:
+            expected = [canary.field] if canary.field in crit.concepts else []
         if expected:
             self.pos_n += 1
-            if canary.field in alerted:
+            if any(c in alerted for c in expected):
                 self.pos_hits += 1
             else:
                 self.misses.append({"task_id": canary.task_id, "field": canary.field, "request_id": request_id})
