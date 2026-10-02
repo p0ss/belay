@@ -15,7 +15,7 @@ from typing import Optional
 from belay.contract import key_from_env
 
 from .certify import run_certification
-from .checks import audit_log
+from .checks import Baseline, audit_log
 from .suite import load_canaries, load_suite
 from .traffic import make_client
 from .verify import load_certificate, verify_direct, verify_swarm
@@ -86,19 +86,31 @@ def _print_verify(r: dict, path: Path) -> None:
     print(f"results -> {path}")
 
 
+def _baseline_from(path: str) -> Baseline:
+    """The identity measured in a certification run, certified or not.
+
+    A detector that failed certification has no certificate, but its behaviour
+    in operation can still be checked against what was measured.
+    """
+    ident = json.loads(Path(path).read_text())["identity"]
+    return Baseline(ident["model_hash"], ident["pack"], ident["profile_hash"])
+
+
 def cmd_verify(a) -> int:
-    cert = _certificate(a.certificate)
+    baseline = _baseline_from(a.baseline_from) if a.baseline_from else None
+    cert = None if baseline else _certificate(a.certificate)
     if a.episode_log:
         suite = load_suite(Path(a.suite), need_cases=False, need_canaries=True)
         r = verify_swarm(suite.canaries, suite.criteria, episode_log=Path(a.episode_log),
-                         alerts_log=Path(a.alerts_log) if a.alerts_log else None, certificate=cert)
+                         alerts_log=Path(a.alerts_log) if a.alerts_log else None, certificate=cert,
+                         baseline=baseline)
     else:
         if not a.url:
             raise SystemExit("verify needs --url (direct) or --episode-log (swarm)")
         suite = load_suite(Path(a.suite), need_cases=False, need_canaries=True)
         decoys = load_canaries(Path(a.decoys), decoy=True) if a.decoys else None
         with make_client(a.url) as client:
-            r = verify_direct(client, suite.canaries, suite.criteria, certificate=cert, decoys=decoys,
+            r = verify_direct(client, suite.canaries, suite.criteria, certificate=cert, baseline=baseline, decoys=decoys,
                               decoy_ratio=a.decoy_ratio, rounds=a.rounds, max_gap=a.max_gap, seed=a.seed,
                               stop_on_expose=not a.no_stop, max_requests=a.max_requests,
                               alerts_log=Path(a.alerts_log) if a.alerts_log else None, episode=a.episode)
@@ -140,6 +152,8 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser("verify", help="verify a certified detector in operation with canaries")
     v.add_argument("--suite", default="belay/certifier/suites")
     v.add_argument("--certificate", help="default runs/certifier/certificate-latest.json")
+    v.add_argument("--baseline-from", help="a certify results JSON: check against the identity it measured, "
+                                           "without a certificate (for a detector that failed certification)")
     v.add_argument("--alerts-log", help="the detector's alert log")
     v.add_argument("--out", help="results JSON path")
     g = v.add_argument_group("direct: the certifier sends canaries between decoys")

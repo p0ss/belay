@@ -196,7 +196,7 @@ def _audit_into(monitor: Monitor, audit: LogAudit, request_index: Dict[str, int]
 
 
 def verify_direct(client: httpx.Client, canaries: List[Canary], criteria: Criteria, *,
-                  certificate: Optional[Certificate] = None, decoys: Optional[List[Canary]] = None,
+                  certificate: Optional[Certificate] = None, decoys: Optional[List[Canary]] = None, baseline: Optional[Baseline] = None,
                   decoy_ratio: float = 2.0, rounds: int = 1, max_gap: float = 1.0, seed: Optional[int] = None,
                   stop_on_expose: bool = True, max_requests: Optional[int] = None,
                   alerts_log: Optional[Path] = None, episode: Optional[str] = None,
@@ -206,7 +206,7 @@ def verify_direct(client: httpx.Client, canaries: List[Canary], criteria: Criter
     rng = random.Random(seed if seed is not None else secrets.randbits(64))
     traffic = Traffic(client, rng, episode=episode)
     decoys = decoys if decoys is not None else builtin_decoys()
-    monitor = Monitor(criteria, lab_key, Baseline.from_certificate(certificate) if certificate else None)
+    monitor = Monitor(criteria, lab_key, Baseline.from_certificate(certificate) if certificate else baseline)
 
     plan: List[Canary] = []
     for _ in range(rounds):
@@ -281,10 +281,10 @@ def _episode_requests(path: Path) -> tuple:
 
 
 def verify_swarm(canaries: List[Canary], criteria: Criteria, *, episode_log: Path,
-                 alerts_log: Optional[Path] = None, certificate: Optional[Certificate] = None,
+                 alerts_log: Optional[Path] = None, certificate: Optional[Certificate] = None, baseline: Optional[Baseline] = None,
                  lab_key: Optional[bytes] = None) -> dict:
     lab_key = lab_key or key_from_env()
-    monitor = Monitor(criteria, lab_key, Baseline.from_certificate(certificate) if certificate else None)
+    monitor = Monitor(criteria, lab_key, Baseline.from_certificate(certificate) if certificate else baseline)
     timeline, inline_records = _episode_requests(episode_log)
     by_task = {c.task_id: c for c in canaries}
 
