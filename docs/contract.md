@@ -51,7 +51,10 @@ and the real detector.
 Alerts are signed, logged and streamed as each token is generated, not when
 the completion ends: the backend hands each alert to the service as it fires
 (`emit` in `belay/contract/service.py`). `coverage.watch` reports the
-detector's watch setting (`off`, `proxy` or `full`); with `off`, `watched` is 0.
+detector's run setting (`off`, `proxy`, `full` or `wide`); with `off`, `watched` is 0.
+The detector may run many more lenses than it reports: only concepts in its
+report profile cross the boundary, and `watched`, `profile` and
+`profile_hash` describe that reported subset, which is what is certified.
 
 `GET /alerts` streams the same alerts as server-sent events, one signed
 `AlertRecord` per event: `{ request_id, session_id, agent, alert, model_hash,

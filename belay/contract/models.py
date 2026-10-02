@@ -42,7 +42,7 @@ class Coverage(BaseModel):
     resident_peak: int
     pack: str
     profile: str
-    # The detector's watch setting: off, proxy or full. None if it does not say.
+    # The detector's run setting: off, proxy, full or wide. None if it does not say.
     watch: Optional[str] = None
 
 
