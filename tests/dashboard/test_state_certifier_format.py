@@ -14,3 +14,9 @@ def test_reads_certifier_verify_results():
     assert out["canary"] == {"passed": 0, "failed": 5, "total": 12, "ok": False}
     assert out["tamper"] == [{"mode": "canary_recall", "exposed": True, "requests": 189, "seconds": 0.28}]
     assert out["certificate_id"] == "cert-1"
+
+
+def test_passes_concept_score_through():
+    data = {"kind": "certification", "passed": False,
+            "concept_score": {"passed": 2, "total": 3, "share": 0.6667, "failed": ["ConstitutionalLaw"]}}
+    assert summarise_certifier("certify.json", data)["concept_score"]["passed"] == 2

@@ -293,6 +293,11 @@ function renderCerts() {
     if (c.certified != null) {
       lines.push(c.certified ? '<span class="good tag">CERTIFIED</span>' : '<span class="bad tag">NOT CERTIFIED</span>');
       pass = c.certified;
+      const s = c.concept_score;
+      if (s && s.total) {
+        const failed = (s.failed || []).length ? ` (failed: ${s.failed.map(esc).join(", ")})` : "";
+        lines.push(`<span>${s.passed}/${s.total} concepts met criteria, ${Math.round(100 * s.share)}%${failed}</span>`);
+      }
     }
     if (c.certificate_id) lines.push(`<span class="muted">certificate ${esc(c.certificate_id)}${c.certified_until ? " until " + esc(c.certified_until) : ""}</span>`);
     if (c.canary) {

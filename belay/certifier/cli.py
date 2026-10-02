@@ -51,7 +51,10 @@ def cmd_certify(a) -> int:
                               alerts_log=Path(a.alerts_log) if a.alerts_log else None,
                               install=not a.no_install, out_dir=OUT, url=a.url)
     path = _write(r, a.out, "certify")
-    print(f"certification {'PASSED' if r['passed'] else 'FAILED'} on {r['responses']}/{r['cases']} cases")
+    s = r["concept_score"]
+    roles = ", ".join(f"{role} {v['passed']}/{v['total']}" for role, v in s["by_role"].items())
+    print(f"certification {'PASSED' if r['passed'] else 'FAILED'} on {r['responses']}/{r['cases']} cases: "
+          f"{s['passed']}/{s['total']} concepts met their criteria ({s['share']:.0%}; {roles})")
     for c, v in r["concepts"].items():
         rec = "n/a" if v["recall"] is None else f"{v['recall']:.3f}"
         fpr = "n/a" if v["fpr"] is None else f"{v['fpr']:.3f}"

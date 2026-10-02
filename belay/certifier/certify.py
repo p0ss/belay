@@ -80,6 +80,24 @@ def score_concepts(cases: List[Case], alerted: Dict[str, set], criteria: Criteri
     return out
 
 
+def concept_score(concepts: dict) -> dict:
+    """The share of concepts that met their criteria, overall and by role.
+
+    Certification still passes only if every concept does; this says how far
+    short a failure fell, and on which concepts.
+    """
+    def share(names):
+        ok = [n for n in names if concepts[n]["passed"]]
+        return {"passed": len(ok), "total": len(names),
+                "share": round(len(ok) / len(names), 4) if names else None}
+
+    by_role: Dict[str, List[str]] = {}
+    for name, c in concepts.items():
+        by_role.setdefault(c.get("role", "other"), []).append(name)
+    return {**share(list(concepts)), "by_role": {role: share(names) for role, names in by_role.items()},
+            "failed": sorted(n for n, c in concepts.items() if not c["passed"])}
+
+
 def run_certification(client: httpx.Client, suite: Suite, *, seed: Optional[int] = None,
                       concurrency: int = 4, episode: Optional[str] = None, alerts_log: Optional[Path] = None,
                       lab_key: Optional[bytes] = None, certifier_key: Optional[bytes] = None,
@@ -146,7 +164,7 @@ def run_certification(client: httpx.Client, suite: Suite, *, seed: Optional[int]
         "kind": "certification", "url": url, "started": iso(started), "elapsed_s": round(elapsed, 3),
         "suite": str(suite.root), "suite_digest": suite.digest(), "cases": len(suite.cases),
         "responses": len(responses), "identity": identity,
-        "concepts": concepts, "checks": {k: {"failures": v, "passed": v == 0} for k, v in checks.items()},
+        "concepts": concepts, "concept_score": concept_score(concepts), "checks": {k: {"failures": v, "passed": v == 0} for k, v in checks.items()},
         "silent_uncovered_responses": silent_uncovered,
         "problems": [p.as_dict() for p in problems[:100]], "problem_count": len(problems),
         "alerts_log": log.as_dict() if log else None,

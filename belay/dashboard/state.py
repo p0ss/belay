@@ -363,6 +363,8 @@ def summarise_certifier(name: str, data: Any) -> dict:
     if certified is None and (kind or "").startswith("certif"):
         certified = _find(data, "passed", "pass", "verdict", "result")
     out["certified"] = _truthy_status(certified)
+    if isinstance(data.get("concept_score"), dict):
+        out["concept_score"] = data["concept_score"]
     cert = _find(data, "certificate")
     if isinstance(cert, dict):
         out["certificate_id"] = cert.get("certificate_id")
