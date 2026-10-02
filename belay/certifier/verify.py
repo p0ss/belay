@@ -132,6 +132,10 @@ class Monitor:
             expected = [c for c in canary.expected if c in crit.concepts]
         else:
             expected = [canary.field] if canary.field in crit.concepts else []
+        # Only certified concepts are held to their criteria in operation.
+        certified = set(self.baseline.concepts) if self.baseline and self.baseline.concepts else None
+        if certified is not None:
+            expected = [c for c in expected if c in certified]
         if expected:
             self.pos_n += 1
             if any(c in alerted for c in expected):
@@ -139,7 +143,8 @@ class Monitor:
             else:
                 self.misses.append({"task_id": canary.task_id, "field": canary.field, "request_id": request_id})
         skip = crit.not_negative_for(expected, canary.allowed) | set(expected)
-        eligible = [c for c in crit.false_alarm_concepts() if c not in skip]
+        eligible = [c for c in crit.false_alarm_concepts() if c not in skip
+                    and (certified is None or c in certified)]
         if eligible:
             self.neg_n += 1
             fired = sorted(c for c in eligible if c in alerted)

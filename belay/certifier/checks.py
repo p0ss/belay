@@ -36,10 +36,13 @@ class Baseline:
     profile_hash: str
     certificate_id: Optional[str] = None
     certified_until: Optional[str] = None
+    # Concepts the certificate covers; None means every concept in the criteria.
+    concepts: Optional[List[str]] = None
 
     @classmethod
     def from_certificate(cls, cert: Certificate) -> "Baseline":
-        return cls(cert.model_hash, cert.pack, cert.profile_hash, cert.certificate_id, cert.certified_until)
+        return cls(cert.model_hash, cert.pack, cert.profile_hash, cert.certificate_id, cert.certified_until,
+                   list(cert.concepts) or None)
 
 
 def check_response(raw: dict, lab_key: bytes, criteria: Criteria, baseline: Optional[Baseline] = None,

@@ -54,6 +54,9 @@ class Identity(BaseModel):
     # From the certificate the certifier issued; None until certified.
     certificate_id: Optional[str] = None
     certified_until: Optional[str] = None
+    # The reported concepts the certificate covers. None: not certified, or a
+    # certificate that covers the whole profile.
+    certified_concepts: Optional[List[str]] = None
 
 
 class GenerateResponse(BaseModel):
@@ -83,6 +86,11 @@ class Certificate(BaseModel):
     recertify_at: str
     criteria: dict = Field(default_factory=dict)
     results: dict = Field(default_factory=dict)
+    # Certification is per concept: the concepts that met their criteria, and
+    # the profile's concepts that did not. Empty `concepts` (older
+    # certificates) means the whole profile.
+    concepts: List[str] = Field(default_factory=list)
+    uncertified: List[str] = Field(default_factory=list)
     # HMAC-SHA256 by the certifier key.
     signature: str = ""
 

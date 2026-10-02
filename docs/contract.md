@@ -63,6 +63,14 @@ detector refuses one whose model hash, pack or profile hash does not match its
 own, and carries the certificate's id and expiry in every `identity`
 afterwards.
 
+Certification is per concept. The certificate's `concepts` lists the reported
+concepts that met their criteria, and `uncertified` the ones that did not; the
+certifier issues one when the detector's integrity checks all pass and at least
+one designated red line is among the certified concepts. `identity` carries the
+certified concepts as `certified_concepts`, so a relying party can tell a
+certified alert from an uncertified one. In operation, only certified concepts
+are held to their criteria.
+
 `GET /health` reports liveness and the identity the detector claims.
 
 The certifier sends certification and canary cases through `POST /generate`

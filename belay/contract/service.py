@@ -117,6 +117,7 @@ def create_app(backend: Backend, log_path: Path, key: Optional[bytes] = None) ->
             profile_hash=backend.profile_hash,
             certificate_id=cert.certificate_id if cert else None,
             certified_until=cert.certified_until if cert else None,
+            certified_concepts=list(cert.concepts) if cert and cert.concepts else None,
         )
 
     @app.post("/generate", response_model=GenerateResponse)

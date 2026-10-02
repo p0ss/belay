@@ -65,6 +65,8 @@ def cmd_certify(a) -> int:
         if not v["passed"]:
             print(f"  check {k}: {v['failures']} failures")
     if r["certificate"]:
+        print(f"{r['certificate_scope']} certificate for {', '.join(r['certified_concepts'])}"
+              + (f"; not certified: {', '.join(r['uncertified_concepts'])}" if r["uncertified_concepts"] else ""))
         print(f"certificate {r['certificate']['certificate_id']} until {r['certificate']['certified_until']}"
               f" -> {r.get('certificate_path')}; installed: {r['installed']}")
     print(f"results -> {path}")
@@ -95,8 +97,10 @@ def _baseline_from(path: str) -> Baseline:
     A detector that failed certification has no certificate, but its behaviour
     in operation can still be checked against what was measured.
     """
-    ident = json.loads(Path(path).read_text())["identity"]
-    return Baseline(ident["model_hash"], ident["pack"], ident["profile_hash"])
+    results = json.loads(Path(path).read_text())
+    ident = results["identity"]
+    return Baseline(ident["model_hash"], ident["pack"], ident["profile_hash"],
+                    concepts=results.get("certified_concepts") or None)
 
 
 def cmd_verify(a) -> int:

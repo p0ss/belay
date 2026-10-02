@@ -242,7 +242,8 @@ function renderStatus() {
   else if (id.certificate_id) {
     const expired = id.certified_until && new Date(id.certified_until) < new Date();
     $("cert-v").innerHTML = expired ? `<span class="bad">EXPIRED</span> ${esc(id.certificate_id)}` : `<span class="good">certified</span> ${esc(id.certificate_id)}`;
-    $("cert-d").textContent = id.certified_until ? "until " + id.certified_until : "";
+    const covers = id.certified_concepts && id.certified_concepts.length ? "for " + id.certified_concepts.join(", ") + " · " : "";
+    $("cert-d").textContent = covers + (id.certified_until ? "until " + id.certified_until : "");
   } else {
     $("cert-v").innerHTML = '<span class="warn">UNCERTIFIED</span>';
     $("cert-d").textContent = "no certificate installed on the detector";
@@ -316,10 +317,21 @@ function renderCerts() {
   }).join("");
 }
 
+// Concepts the installed certificate covers; null when it covers the whole profile.
+function certifiedConcepts() {
+  const c = S.detector && S.detector.identity && S.detector.identity.certified_concepts;
+  return c && c.length ? new Set(c) : null;
+}
+
+function uncertified(a) {
+  const c = certifiedConcepts();
+  return c !== null && !c.has(a.concept);
+}
+
 function chip(a) {
   const off = a.match === "off_task" || a.match === "other_line";
   const cls = a.verified ? a.class + (off ? " off" : "") : "altered";
-  const label = a.verified ? `${a.concept} ${score(a.score).replace(/^0/, "")}` : `ALTERED ${a.concept}`;
+  const label = a.verified ? `${a.concept}${uncertified(a) ? " (uncertified)" : ""} ${score(a.score).replace(/^0/, "")}` : `ALTERED ${a.concept}`;
   return `<span class="chip ${esc(cls)}" title="token ${esc(a.token_index)} · ${esc(a.request_id)}">${esc(label)}</span>`;
 }
 
@@ -353,6 +365,7 @@ function renderFeed() {
     const problems = a.problems && a.problems.length ? `<div class="problems">${a.problems.map(esc).join("; ")}</div>` : "";
     return `<li class="${esc(cls)}">` +
       `<div class="l1"><span class="field ${esc(a.class)} concept">${esc(a.concept)}</span>` +
+      (uncertified(a) ? ` <span class="muted">uncertified</span>` : "") +
       `<span>score <span class="num">${score(a.score)}</span></span>` +
       `<span>token <span class="num">${esc(a.token_index)}</span></span>` +
       `<span class="num">${esc(a.agent)}</span></div>` +

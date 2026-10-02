@@ -153,7 +153,14 @@ def run_certification(client: httpx.Client, suite: Suite, *, seed: Optional[int]
     concepts = score_concepts(suite.cases, alerted, criteria)
     checks = {name: sum(1 for p in problems if p.check == name) for name in
               ("availability", "signature", "echo", "coverage", "identity", "log")}
-    passed = all(c["passed"] for c in concepts.values()) and not problems and bool(identities)
+    integrity = not problems and bool(identities)
+    passed = all(c["passed"] for c in concepts.values()) and integrity
+    # Certification is per concept: a certificate is issued for the concepts
+    # that met their criteria, provided the detector's integrity checks all
+    # passed and at least one designated red line is among them.
+    certified = sorted(c for c, v in concepts.items() if v["passed"]) if integrity else []
+    uncertified = sorted(c for c in concepts if c not in certified)
+    issue = any(concepts[c]["role"] == "designated" for c in certified)
 
     identity = None
     if identities:
@@ -168,10 +175,12 @@ def run_certification(client: httpx.Client, suite: Suite, *, seed: Optional[int]
         "silent_uncovered_responses": silent_uncovered,
         "problems": [p.as_dict() for p in problems[:100]], "problem_count": len(problems),
         "alerts_log": log.as_dict() if log else None,
-        "passed": passed, "certificate": None, "installed": None,
+        "passed": passed, "certified_concepts": certified, "uncertified_concepts": uncertified,
+        "certificate_scope": ("full" if passed else "partial") if issue else None,
+        "certificate": None, "installed": None,
     }
 
-    if passed:
+    if issue:
         issued = datetime.now(timezone.utc)
         cert = Certificate(
             certificate_id="cert-" + secrets.token_hex(8), model_hash=identity["model_hash"],
@@ -182,6 +191,7 @@ def run_certification(client: httpx.Client, suite: Suite, *, seed: Optional[int]
                      "concepts": {c: {k: v[k] for k in ("positives", "hits", "recall", "negatives",
                                                          "false_alarms", "fpr")}
                                   for c, v in concepts.items()}},
+            concepts=certified, uncertified=uncertified,
         )
         cert.signature = sign(cert, certifier_key)
         results["certificate"] = cert.model_dump(mode="json")
