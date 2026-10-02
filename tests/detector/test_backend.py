@@ -104,8 +104,10 @@ def test_off_and_tamper_identity(fake_model, fake_pack, profile):
     assert (tampered.model_hash, tampered.pack, tampered.profile_hash) == \
         (honest.model_hash, honest.pack, honest.profile_hash)
     assert tampered.threshold > 1.0
-    full = FakeModelBackend(watch="full", model=str(fake_model), pack=fake_pack)
-    assert full.watched == 4 and full.profile == "full-pack"
+    # full runs the whole pack but reports, and claims, only the report profile.
+    full = FakeModelBackend(watch="full", model=str(fake_model), pack=fake_pack, profile=profile)
+    assert full.watched == 2 and len(full.pinned_keys) == 4 and full.profile == "profile"
+    assert full.profile_hash == honest.profile_hash
     with pytest.raises(ValueError):
         FakeModelBackend(watch="off", tamper="swap", model=str(fake_model), pack=fake_pack)
     for b in (off, honest, tampered, full):

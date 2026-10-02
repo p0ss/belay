@@ -35,7 +35,7 @@ from .monitors import AlertWatcher, GpuPoller
 from .report import format_tables, write_outputs
 from .runner import PROMPTS_PATH, Detector, load_prompts, run_setting
 
-SETTINGS = ("off", "proxy", "full")
+SETTINGS = ("off", "proxy", "full", "wide")
 
 
 def _ints(text: str) -> List[int]:
@@ -176,7 +176,7 @@ def build_parser() -> argparse.ArgumentParser:
     where.add_argument("--launch", action="store_true", help="start and stop the detector for each setting")
     where.add_argument("--dry-run", action="store_true", help="use the in-process stub detector for each setting")
     r.add_argument("--setting", choices=SETTINGS, help="label for the detector at --url (its --watch flag)")
-    r.add_argument("--settings", default=",".join(SETTINGS), help="with --launch or --dry-run (default off,proxy,full)")
+    r.add_argument("--settings", default="off,proxy,full", help="with --launch or --dry-run (default off,proxy,full; wide also accepted)")
     r.add_argument("--command", default=DEFAULT_COMMAND,
                    help="with --launch: command template, formatted with {setting}, {port}, {host}")
     r.add_argument("--host", default="127.0.0.1")
