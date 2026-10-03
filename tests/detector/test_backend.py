@@ -1,4 +1,4 @@
-"""The backend's request queue and batching (no model), and the fused probe scorer against HAT's Lens."""
+"""The backend's request queue, identity and flags, with generation replaced (no model, no HAT)."""
 
 import threading
 import time
@@ -11,41 +11,36 @@ from belay.contract import GenerateResponse, key_from_env, verify
 from belay.contract.events import read
 from belay.contract.service import BackendResult, RawAlert, create_app
 from belay.detector.backend import HatBackend
+from belay.detector.server import parse_args
 
-HIDDEN = 16  # as conftest
 
-
-class FakeModelBackend(HatBackend):
-    """HatBackend's queue and identity with the generation replaced, to test concurrency without a GPU."""
+class FakeGenerateBackend(HatBackend):
+    """HatBackend's queue and identity with the HAT generation replaced."""
 
     def __init__(self, *args, delay=0.05, **kwargs):
-        self.batches = []
+        self.order = []
         self.active = 0
         self.max_active = 0
         self.delay = delay
         self.lock = threading.Lock()
         super().__init__(*args, load_model=False, hash_cache=None, **kwargs)
 
-    def _generate_batch(self, requests, emits=None):
-        emits = emits or [None] * len(requests)
+    def _generate(self, request, emit):
         with self.lock:
             self.active += 1
             self.max_active = max(self.max_active, self.active)
-        self.batches.append([r.request_id for r in requests])
+        self.order.append(request.request_id)
         time.sleep(self.delay)
         with self.lock:
             self.active -= 1
-        out = []
-        for r, emit in zip(requests, emits):
-            text = r.messages[-1].content
-            alerts = [RawAlert("Law", 0.995, 0, ["Root", "Law"], time.time())] if "law" in text else []
-            if emit is not None:  # as the real backend: emitted alerts are not repeated
-                for a in alerts:
-                    emit(a)
-                alerts = []
-            out.append(BackendResult(completion=f"echo {text}", tokens=3, alerts=alerts,
-                                     watched=self.watched, resident_peak=self.watched, overhead_ms=0.1))
-        return out
+        text = request.messages[-1].content
+        alerts = [RawAlert("Law", 0.995, 0, ["Root", "Law"], time.time())] if "law" in text else []
+        if emit is not None:  # as the real backend: emitted alerts are not repeated
+            for a in alerts:
+                emit(a)
+            alerts = []
+        return BackendResult(completion=f"echo {text}", tokens=3, alerts=alerts,
+                             watched=self.watched, resident_peak=self.watched, overhead_ms=0.1)
 
 
 @pytest.fixture
@@ -61,10 +56,8 @@ def _request(i, text):
             "messages": [{"role": "user", "content": text}], "max_tokens": 8}
 
 
-@pytest.mark.parametrize("max_batch", [1, 4])
-def test_four_concurrent_sessions_signed(tmp_path, fake_model, fake_pack, profile, max_batch):
-    backend = FakeModelBackend(watch="proxy", model=str(fake_model), pack=fake_pack, profile=profile,
-                               max_batch=max_batch, batch_window_ms=50)
+def test_four_concurrent_sessions_one_at_a_time(tmp_path, fake_model, fake_pack, profile):
+    backend = FakeGenerateBackend(watch="proxy", model=str(fake_model), pack=fake_pack, profile=profile)
     assert backend.watched == 2 and backend.profile == "profile"
     client = TestClient(create_app(backend, tmp_path / "alerts.jsonl"))
     texts = ["constitutional law", "chemistry", "more law", "cooking"]
@@ -80,43 +73,72 @@ def test_four_concurrent_sessions_signed(tmp_path, fake_model, fake_pack, profil
         assert bool(body["alerts"]) == ("law" in texts[i])
         assert body["identity"]["model_hash"] == backend.model_hash
         assert body["coverage"]["watch"] == "proxy"
-    # Emitted alerts were logged once each.
     logged = [e for e in read(tmp_path / "alerts.jsonl") if e["kind"] == "alert"]
     assert sorted(e["payload"]["request_id"] for e in logged) == ["r-0", "r-2"]
-    # One generation at a time either way; batching groups waiting requests.
+    # One request at a time through HAT, every request served.
     assert backend.max_active == 1
-    sizes = [len(b) for b in backend.batches]
-    assert sum(sizes) == 4
-    if max_batch == 1:
-        assert sizes == [1, 1, 1, 1]
-    else:
-        assert max(sizes) > 1
+    assert sorted(backend.order) == ["r-0", "r-1", "r-2", "r-3"]
     backend.close()
 
 
-def test_off_and_tamper_identity(fake_model, fake_pack, profile):
-    off = FakeModelBackend(watch="off", model=str(fake_model), pack=fake_pack)
-    assert off.watched == 0 and off.pack == "none"
-    honest = FakeModelBackend(watch="proxy", model=str(fake_model), pack=fake_pack, profile=profile)
-    tampered = FakeModelBackend(watch="proxy", tamper="threshold", model=str(fake_model), pack=fake_pack,
-                                profile=profile)
+def test_queue_is_fifo(fake_model, fake_pack, profile):
+    from belay.contract.models import GenerateRequest
+
+    backend = FakeGenerateBackend(watch="proxy", model=str(fake_model), pack=fake_pack, profile=profile,
+                                  delay=0.02)
+    with ThreadPoolExecutor(4) as pool:
+        futures = []
+        for i in range(4):
+            futures.append(pool.submit(backend.generate, GenerateRequest.model_validate(_request(i, "x"))))
+            time.sleep(0.005)  # submitted in order
+        [f.result() for f in futures]
+    assert backend.order == ["r-0", "r-1", "r-2", "r-3"]
+    backend.close()
+
+
+def test_off_and_tamper_identity(fake_model, fake_pack, profile, tmp_path):
+    off = FakeGenerateBackend(watch="off", model=str(fake_model), pack=fake_pack)
+    assert off.watched == 0 and off.pack == "none" and off.profile == "none"
+    honest = FakeGenerateBackend(watch="proxy", model=str(fake_model), pack=fake_pack, profile=profile)
+    tampered = FakeGenerateBackend(watch="proxy", tamper="threshold", model=str(fake_model), pack=fake_pack,
+                                   profile=profile)
     # Tampering never changes what the detector claims.
     assert (tampered.model_hash, tampered.pack, tampered.profile_hash) == \
         (honest.model_hash, honest.pack, honest.profile_hash)
     assert tampered.threshold > 1.0
-    # full runs the whole pack but reports, and claims, only the report profile.
-    full = FakeModelBackend(watch="full", model=str(fake_model), pack=fake_pack, profile=profile)
-    assert full.watched == 2 and len(full.pinned_keys) == 4 and full.profile == "profile"
-    assert full.profile_hash == honest.profile_hash
+    # Neither does the run setting: one certified identity whatever the lab runs.
+    others = [FakeGenerateBackend(run=run, model=str(fake_model), pack=fake_pack, profile=profile)
+              for run in ("full", "wide")]
+    for b in others:
+        assert (b.pack, b.profile, b.profile_hash, b.watched) == \
+            (honest.pack, honest.profile, honest.profile_hash, 2)
+        assert b.report_keys == [("Courts", 2), ("Law", 1)]
+    # A report profile other than the run profile: its hash is what is claimed.
+    chem = tmp_path / "chem.txt"
+    chem.write_text("Chem\n")
+    mixed = FakeGenerateBackend(run="proxy", model=str(fake_model), pack=fake_pack, profile=profile, report=chem)
+    assert mixed.report_keys == [("Chem", 1)] and mixed.profile == "chem"
+    assert mixed.profile_hash != honest.profile_hash
+    assert mixed._watch_concepts() == ["Chem", "Law"]  # HAT watches both; only Chem crosses
     with pytest.raises(ValueError):
-        FakeModelBackend(watch="off", tamper="swap", model=str(fake_model), pack=fake_pack)
-    for b in (off, honest, tampered, full):
+        FakeGenerateBackend(watch="off", tamper="swap", model=str(fake_model), pack=fake_pack)
+    for b in (off, honest, tampered, mixed, *others):
         b.close()
 
 
+def test_watch_is_an_alias_for_run(fake_model, fake_pack, profile):
+    b = FakeGenerateBackend(watch="full", model=str(fake_model), pack=fake_pack, profile=profile)
+    assert b.run == b.watch == "full"
+    b.close()
+    with pytest.raises(ValueError):
+        FakeGenerateBackend(run="proxy", watch="full", model=str(fake_model), pack=fake_pack, profile=profile)
+    with pytest.raises(ValueError):
+        FakeGenerateBackend(run="wide", tamper="nonsense", model=str(fake_model), pack=fake_pack, profile=profile)
+
+
 def test_backend_error_reaches_caller(fake_model, fake_pack, profile):
-    class Broken(FakeModelBackend):
-        def _generate_batch(self, requests, emits=None):
+    class Broken(FakeGenerateBackend):
+        def _generate(self, request, emit):
             raise RuntimeError("boom")
 
     backend = Broken(watch="proxy", model=str(fake_model), pack=fake_pack, profile=profile)
@@ -127,25 +149,17 @@ def test_backend_error_reaches_caller(fake_model, fake_pack, profile):
     backend.close()
 
 
-def test_fused_probes_match_hat_lens():
-    torch = pytest.importorskip("torch")
-    lens_types = pytest.importorskip("headspace.monitoring.lens_types")
-    from belay.detector.backend import FusedProbes
-
-    torch.manual_seed(1)
-    layers = [1, 3, 5]
-    spec = {"A": [1, 3], "B": [5], "C": [1, 3, 5]}
-    for calibrated in (True, False):
-        lenses = []
-        for name, ls in spec.items():
-            probes = {l: lens_types.SimpleMLP(HIDDEN).eval() for l in ls}
-            cal = {l: torch.sort(torch.rand(201))[0] for l in ls} if calibrated else None
-            lenses.append(lens_types.Lens(probes, calibration=cal).eval())
-        fused = FusedProbes.build(lenses, layers)
-        assert fused is not None
-        states = {l: torch.randn(3, HIDDEN) for l in layers}
-        with torch.inference_mode():
-            got = fused(states)
-            want = torch.stack([lens(states).float() for lens in lenses])
-        assert got.shape == (3, 3)
-        assert torch.allclose(got, want, atol=1e-5), (calibrated, got, want)
+def test_server_flags(tmp_path):
+    a = parse_args(["--watch", "wide"])
+    assert a.run == "wide"
+    a = parse_args(["--host", "0.0.0.0", "--port", "9000", "--watch", "off"])
+    assert (a.host, a.port, a.run) == ("0.0.0.0", 9000, "off")
+    a = parse_args(["--run", "full", "--report", "profiles/proxy-redlines.txt"])
+    assert a.run == "full" and str(a.report).endswith("proxy-redlines.txt")
+    assert parse_args([]).run == "proxy"
+    with pytest.raises(SystemExit):
+        parse_args(["--run", "full", "--watch", "proxy"])
+    with pytest.raises(SystemExit):
+        parse_args(["--log", str(tmp_path / "x.jsonl"), "--internal-log", str(tmp_path / "x.jsonl")])
+    with pytest.raises(SystemExit):  # batching is gone
+        parse_args(["--max-batch", "4"])

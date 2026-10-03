@@ -1,46 +1,46 @@
 """
-The real lab-side detector: HAT's lenses on Gemma 4 E4B-it, behind the
-`Backend` protocol of belay.contract.service.
+The lab-side detector: a thin boundary over HAT's runtime, behind the `Backend`
+protocol of belay.contract.service.
 
-One model serves many sessions. Requests go into a FIFO queue and a single
-worker thread runs them, `max_batch` at a time: with max_batch=1 it is a plain
-request queue (one generation at a time); above 1 the worker takes whatever is
-waiting (up to max_batch) and generates it as one left-padded batch.
+The lab runs HAT's `Monitor` as HAT ships it: `Monitor.from_pretrained` loads
+the model and a lens pack, and `Monitor.generate` yields one `Step` per token,
+with the detections HAT made on that token and the alerts its `WatchProfile`
+raised. This module only decides what crosses the boundary: each alert HAT
+raises for a concept of the REPORT profile is handed to `emit` as soon as its
+step arrives; everything else HAT detects stays in the lab (an internal log).
+The overhead reported is HAT's own (`Step.monitor_ms`).
 
-The lenses read the model's hidden states token by token, inside generation,
-through a forward hook: every forward pass (one per new token) scores the
-watched lenses on the last position of each model layer they read, exactly
-the states HAT's Monitor reads (hidden_states[L + 1] for model layer L). A
-watched lens alerts at the first token whose calibrated score crosses the
-threshold; `t_token` is when that token's forward pass finished.
+Run settings (`run`), what HAT runs on every token:
+    off     no monitor: the same model with Hugging Face `generate`, the same
+            greedy settings (the benchmark's baseline)
+    proxy   the university pack under HAT's hierarchical loading, watching the
+            run profile (profiles/proxy-redlines.txt) and the report profile
+    full    the same pack, watching every root concept (so everything HAT
+            detects above threshold is an alert; only reported ones cross)
+    wide    the First Light pack under HAT's hierarchical loading, watching
+            every root concept (all lab-internal). The reported red lines live
+            in the university pack, so a second HAT Monitor over that pack
+            reads the same hidden states (`Monitor.read`) on each step; its
+            alerts are the ones that cross. See `_generate_wide`.
 
-What the detector runs (`run`) is separate from what it reports (`report`):
+Report profile: only alerts for its concepts cross the boundary (emit, the
+response's alerts, the /alerts stream, the alert log). A detection is reported
+if its HAT path passes through a report-profile concept, the same rule as HAT's
+WatchProfile. The identity (pack, profile hash) is the report profile's, so one
+certificate covers every run setting.
 
-Run settings, the lenses scored on every token:
-    off     the model with no lenses (the benchmark's baseline)
-    proxy   the lenses of a watch profile (profiles/proxy-redlines.txt), and
-            every lens beneath them in the hierarchy, pinned resident
-    full    every lens in the university pack pinned resident (the upper bound)
-    wide    the First Light pack (about 7,950 lenses, hierarchy layers 0-6)
-            under HAT's dynamic hierarchical loading, so only a few dozen are
-            resident at a time, plus the report profile's lenses from the
-            university pack, pinned
-
-Report profile: only alerts for concepts in it cross the boundary (emit,
-response alerts, the /alerts stream, the alert log). Its lenses are always
-pinned and scored whatever the run setting (except off). Everything else the
-lab scores stays inside: crossings of non-reported lenses go to a separate
-lab-internal log, never to the boundary. The identity (pack, profile hash) is
-the report profile's, so one certificate covers every run setting.
-
-Tamper modes (lab-side cheating, for the certifier to catch), applied to the
-reported lenses:
+Tamper modes (lab-side cheating, for the certifier to catch):
     none       honest
-    off        reported lenses' readings thrown away (none run if nothing else
-               does), but coverage still claims them
-    threshold  threshold raised so nearly nothing alerts
-    swap       the reported lenses loaded from an untrained pack
-               (random weights, same file names; see swap_pack.py)
+    off        reported readings thrown away, coverage still claimed. With
+               `proxy` nothing else is watched, so no monitor runs at all and
+               a plausible overhead is invented; with `full` and `wide` HAT
+               runs and the reported alerts are dropped.
+    threshold  the reported monitor's watch threshold raised so nothing alerts
+    swap       the reported lenses loaded from an untrained pack (random
+               weights, same file names; see swap_pack.py)
+
+One worker thread owns the model; requests wait in a FIFO queue and go through
+HAT one at a time.
 """
 
 from __future__ import annotations
@@ -52,10 +52,9 @@ import random
 import threading
 import time
 from concurrent.futures import Future
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
-
+from typing import Dict, List, Optional, Set
 
 from belay.contract.models import GenerateRequest
 from belay.contract.service import BackendResult, Emit, RawAlert
@@ -75,145 +74,38 @@ RUN_MODES = ("off", "proxy", "full", "wide")
 WATCH_MODES = RUN_MODES  # deprecated name
 DEFAULT_INTERNAL_LOG = ROOT / "runs" / "detector-internal.jsonl"
 TAMPER_MODES = ("none", "off", "threshold", "swap")
-# Calibrated scores are percentiles of background, at most 1.0 (beyond every
-# background state). On-topic text saturates at 1.0 for many tokens, so a
-# threshold of 1.0 still alerts on clear cases (a subtler tamper); above 1.0
+# Calibrated scores are percentiles of background, at most 1.0, so above 1.0
 # nothing alerts while the lenses still run and cost what they should.
 TAMPER_THRESHOLD = 1.01
-# Tamper "off" reports this much monitoring per token (about the proxy profile's real cost).
+# Tamper "off" with nothing else running reports this much monitoring per token.
 FAKE_MONITOR_MS_PER_TOKEN = 0.7
+# The lens manager settings of HAT's Monitor.from_pretrained, for the second
+# Monitor of the wide run (which shares the first one's model).
+HAT_MANAGER_DEFAULTS = dict(base_layers=[0], load_threshold=0.3, keep_top_k=100, max_loaded_lenses=1000)
 
 
 @dataclass
 class _Job:
     request: GenerateRequest
     future: Future
-    queued: float
     emit: Optional[Emit] = None
 
 
-class Lenses:
-    """The resident lenses: HAT's DynamicLensManager loads them, this scores them in batch."""
+@dataclass
+class _Request:
+    """What one request accumulates while HAT generates it."""
+    emit: Optional[Emit]
+    held: List[RawAlert] = field(default_factory=list)  # alerts when there is no emit
+    internal: List[dict] = field(default_factory=list)  # lab-internal crossings, never reported
+    fired: Set[tuple] = field(default_factory=set)  # (pack, concept, layer) that already alerted
+    overhead_ms: float = 0.0
+    resident_peak: int = 0
 
-    def __init__(self, load_dir: Path, keys: Sequence[Key], hierarchy: Hierarchy, device: str,
-                 fused: bool = True):
-        from headspace.monitoring.lens_manager import DynamicLensManager
-        from headspace.monitoring.lens_types import Lens
-
-        self.manager = DynamicLensManager(
-            lenses_dir=Path(load_dir), device=device, base_layers=[],
-            max_loaded_lenses=max(1000, 2 * len(keys)), keep_top_k=max(1000, 2 * len(keys)),
-        )
-        missing = [k for k in keys if k not in self.manager.concept_metadata]
-        if missing:
-            raise RuntimeError(f"pack has no lens metadata for {missing[:5]}")
-        self.manager._load_concepts(list(keys), reason="watch")
-        self.keys = list(keys)
-        self.lenses = [self.manager.cache.loaded_lenses[k] for k in self.keys]
-        for k, lens in zip(self.keys, self.lenses):
-            if not isinstance(lens, Lens):
-                raise RuntimeError(f"{k} is not a multi-layer band lens; only band packs are supported")
-        self.paths = [hierarchy.path(k) for k in self.keys]
-        self.layers = sorted({layer for lens in self.lenses for layer in lens.model_layers})
-        self.dtype = next(self.lenses[0].parameters()).dtype if self.lenses else None
-        self.calibrated = bool(self.manager.probe_calibrated)
-        self.fused = FusedProbes.build(self.lenses, self.layers) if fused else None
-
-    def __len__(self) -> int:
-        return len(self.lenses)
-
-    def score(self, states: Dict[int, "torch.Tensor"]) -> "torch.Tensor":
-        """Scores [n_lenses, batch] from model layer -> hidden states [batch, hidden]."""
-        # As HAT's Monitor.read: float, then the manager's normalisation.
-        normed = {layer: self.manager._normalize(h.float()).to(self.dtype) for layer, h in states.items()}
-        if self.fused is not None:
-            return self.fused(normed)
-        return self.score_loop(normed)
-
-    def score_loop(self, normed: Dict[int, "torch.Tensor"]) -> "torch.Tensor":
-        """Lens by lens, probe by probe, as HAT's Lens.forward computes it (without its per-probe sync)."""
-        import torch
-
-        rows = []
-        for lens in self.lenses:
-            probe_scores = []
-            for layer in lens.model_layers:
-                prob = lens.probes[str(layer)](normed[layer]).reshape(-1)
-                probe_scores.append(lens._percentile(prob, layer) if lens.calibrated else prob.float())
-            stacked = torch.stack(probe_scores)
-            # Calibrated probes combine by max, raw ones by mean.
-            rows.append(stacked.max(dim=0).values if lens.calibrated else stacked.mean(dim=0))
-        return torch.stack(rows)
-
-
-class FusedProbes:
-    """
-    Every probe of every resident lens in a few batched matmuls.
-
-    HAT runs each probe as its own small MLP (Linear-ReLU-Linear-ReLU-Linear,
-    sigmoid), so a pack of hundreds of probes costs thousands of kernel launches
-    per token. Here the probes' weights are stacked and run with bmm, the
-    calibration quantiles are stacked for one batched searchsorted, and each
-    lens takes the max (calibrated) or mean (raw) of its probes. Same numbers,
-    far fewer launches. `build` returns None for a pack it cannot fuse.
-    """
-
-    def __init__(self, layers, layer_idx, lens_idx, n_lenses, w, b, quantiles):
-        self.layers, self.layer_idx, self.lens_idx, self.n_lenses = layers, layer_idx, lens_idx, n_lenses
-        self.w, self.b, self.quantiles = w, b, quantiles
-
-    @classmethod
-    def build(cls, lenses: Sequence, layers: Sequence[int]) -> Optional["FusedProbes"]:
-        import torch
-        from headspace.monitoring.lens_types import SimpleMLP
-
-        mlps, layer_idx, lens_idx, quantiles = [], [], [], []
-        calibrated = {bool(lens.calibrated) for lens in lenses}
-        if len(calibrated) != 1:
-            return None
-        for i, lens in enumerate(lenses):
-            for layer in lens.model_layers:
-                mlp = lens.probes[str(layer)]
-                if not isinstance(mlp, SimpleMLP) or mlp.has_layer_norm:
-                    return None
-                mlps.append(mlp)
-                layer_idx.append(list(layers).index(layer))
-                lens_idx.append(i)
-                if lens.calibrated:
-                    quantiles.append(getattr(lens, f"quantiles_{layer}"))
-        linears = [[m for m in mlp.net if isinstance(m, torch.nn.Linear)] for mlp in mlps]
-        if any(len(ls) != 3 for ls in linears):
-            return None
-        shapes = {tuple(tuple(l.weight.shape) for l in ls) for ls in linears}
-        if len(shapes) != 1 or (quantiles and len({q.numel() for q in quantiles}) != 1):
-            return None
-        device = linears[0][0].weight.device
-        w = [torch.stack([ls[k].weight.detach() for ls in linears]) for k in range(3)]
-        b = [torch.stack([ls[k].bias.detach() for ls in linears]).unsqueeze(1) for k in range(3)]
-        q = torch.stack([x.float() for x in quantiles]).to(device) if quantiles else None
-        return cls(list(layers), torch.tensor(layer_idx, device=device), torch.tensor(lens_idx, device=device),
-                   len(lenses), w, b, q)
-
-    def __call__(self, normed: Dict[int, "torch.Tensor"]) -> "torch.Tensor":
-        import torch
-
-        x = torch.stack([normed[layer] for layer in self.layers])[self.layer_idx]  # [P, B, D]
-        h = torch.baddbmm(self.b[0], x, self.w[0].transpose(1, 2)).relu_()
-        h = torch.baddbmm(self.b[1], h, self.w[1].transpose(1, 2)).relu_()
-        prob = torch.sigmoid(torch.baddbmm(self.b[2], h, self.w[2].transpose(1, 2)).squeeze(-1)).float()  # [P, B]
-        index = self.lens_idx[:, None].expand_as(prob)
-        if self.quantiles is None:
-            out = torch.zeros(self.n_lenses, prob.shape[1], device=prob.device)
-            return out.scatter_reduce(0, index, prob, "mean", include_self=False)
-        q = self.quantiles
-        k = q.shape[1]
-        idx = torch.searchsorted(q, prob.contiguous()).clamp(1, k - 1)
-        lo, hi = q.gather(1, idx - 1), q.gather(1, idx)
-        frac = torch.where(hi > lo, (prob - lo) / (hi - lo), torch.zeros_like(lo)).clamp(0, 1)
-        pct = (idx - 1 + frac) / (k - 1)
-        pct = torch.where(prob <= q[:, :1], torch.zeros_like(pct), torch.where(prob >= q[:, -1:], torch.ones_like(pct), pct))
-        out = torch.zeros(self.n_lenses, prob.shape[1], device=prob.device)
-        return out.scatter_reduce(0, index, pct, "amax", include_self=False)
+    def report(self, alert: RawAlert) -> None:
+        if self.emit is not None:
+            self.emit(alert)
+        else:
+            self.held.append(alert)
 
 
 def wide_hierarchy_dir(pack: Path) -> Path:
@@ -229,176 +121,13 @@ def wide_hierarchy_dir(pack: Path) -> Path:
     raise FileNotFoundError(f"no hierarchy for {pack}: bundle one with `headspace pack add-hierarchy`")
 
 
-class DynamicPack:
-    """
-    A large hierarchical pack under HAT's dynamic loading, as HAT's runtime
-    Monitor runs it: the top hierarchy layer is resident; each token the
-    resident lenses are scored, the children of the top-k are loaded and
-    scored, and the rest are pruned back to a warm cache. Only a few dozen
-    lenses are scored per token out of thousands.
-
-    Single-probe lenses read one model layer: the pack's declared
-    `model_layer`, else the last one (HAT's Monitor default).
-    """
-
-    def __init__(self, pack_dir: Path, device: str, hierarchy_dir: Optional[Path] = None, top_k: int = 10,
-                 max_loaded_lenses: int = 1000, ram_mb: int = 0, threshold: float = 0.5):
-        from headspace.monitoring.lens_manager import DynamicLensManager
-
-        pack_dir = Path(pack_dir)
-        # The defaults of HAT's Monitor.from_pretrained (HatCat's reference server).
-        self.manager = DynamicLensManager(
-            lenses_dir=pack_dir, layers_data_dir=Path(hierarchy_dir or wide_hierarchy_dir(pack_dir)),
-            device=device, base_layers=[0], load_threshold=0.3, keep_top_k=100,
-            max_loaded_lenses=max_loaded_lenses,
-        )
-        if not self.manager.concept_metadata:
-            raise RuntimeError(f"no concepts with lenses in {pack_dir}")
-        if ram_mb:
-            self.manager.preload_pack_to_ram(max_ram_mb=ram_mb)
-        self.name = pack_dir.name
-        self.top_k = top_k
-        self.threshold = threshold
-        self.model_layer = self.manager.model_layer  # None: the last model layer
-        # Children are loaded and scored inside detect_and_expand, then pruned
-        # before it returns: count what was resident just before the prune.
-        self.step_peak = self.resident
-        cache = self.manager.cache
-        prune = cache.prune_to_top_k
-
-        def counted_prune(*args, **kwargs):
-            self.step_peak = max(self.step_peak, len(cache.loaded_lenses))
-            return prune(*args, **kwargs)
-
-        cache.prune_to_top_k = counted_prune
-
-    @property
-    def total(self) -> int:
-        return len(self.manager.concept_metadata)
-
-    @property
-    def hidden_dim(self) -> Optional[int]:
-        return self.manager.hidden_dim
-
-    @property
-    def resident(self) -> int:
-        """Lenses scored on the next token."""
-        return len(self.manager.cache.loaded_lenses)
-
-    @property
-    def warm(self) -> int:
-        """Lenses held on the device but not scored (HAT's warm cache)."""
-        return len(self.manager.cache.warm_cache)
-
-    def read(self, hidden: "torch.Tensor") -> List[tuple]:
-        """Detections (concept, score, hierarchy layer) for one position [hidden] or [1, hidden].
-
-        Afterwards `step_peak` is the most lenses resident during the read."""
-        self.step_peak = self.resident
-        results, _ = self.manager.detect_and_expand(hidden, top_k=self.top_k)
-        self.step_peak = max(self.step_peak, self.resident)
-        return results
-
-    def path(self, concept: str, layer: int) -> List[str]:
-        return self.manager.get_concept_path(concept, layer)
-
-
-class FusedWidePack:
-    """
-    A large single-layer pack scored in full on every token, in one pass.
-
-    HAT's dynamic loading keeps few lenses resident but scores each one as its
-    own small MLP, a few hundred kernel launches per token per row. When every
-    lens reads the same model layer and shares one shape (First Light:
-    Linear 2560->128, ReLU, 128->64, ReLU, 64->1, sigmoid), the first layers
-    of all lenses are one matmul and the rest are two batched matmuls, for
-    every row of the batch at once. Lenses are loaded breadth-first through the
-    hierarchy until `budget_mb` of weights is used. Scores are the lenses' raw
-    probabilities (no calibration; First Light has none).
-    """
-
-    def __init__(self, pack_dir: Path, device: str, hierarchy_dir: Optional[Path] = None,
-                 budget_mb: int = 2000, threshold: float = 0.5, **_):
-        import torch
-        from headspace.monitoring.lens_manager import DynamicLensManager
-
-        pack_dir = Path(pack_dir)
-        # For metadata and hierarchy paths only; the lenses are loaded here.
-        self.manager = DynamicLensManager(
-            lenses_dir=pack_dir, layers_data_dir=Path(hierarchy_dir or wide_hierarchy_dir(pack_dir)),
-            device="cpu", base_layers=[0], load_threshold=0.3, keep_top_k=100, max_loaded_lenses=100,
-        )
-        self.name = pack_dir.name
-        self.threshold = threshold
-        self.model_layer = self.manager.model_layer
-        self.total_in_pack = len(self.manager.concept_metadata)
-
-        keys = sorted(self.manager.concept_metadata, key=lambda k: (k[1], k[0]))
-        w1, b1, w2, b2, w3, b3, self.keys = [], [], [], [], [], [], []
-        used, shape = 0, None
-        for key in keys:
-            path = getattr(self.manager.concept_metadata[key], "activation_lens_path", None)
-            if not path or not Path(path).exists():
-                continue
-            sd = torch.load(path, map_location="cpu", weights_only=True)
-            try:
-                lens = (sd["net.0.weight"], sd["net.0.bias"], sd["net.3.weight"], sd["net.3.bias"],
-                        sd["net.6.weight"], sd["net.6.bias"])
-            except KeyError:
-                continue
-            s = tuple(tuple(x.shape) for x in lens)
-            shape = shape or s
-            if s != shape:  # e.g. simplex lenses over a wider input
-                continue
-            size = sum(x.numel() * x.element_size() for x in lens)
-            if used + size > budget_mb * 1e6:
-                break
-            used += size
-            for acc, x in zip((w1, b1, w2, b2, w3, b3), lens):
-                acc.append(x)
-            self.keys.append(key)
-        if not self.keys:
-            raise RuntimeError(f"no fusable lenses in {pack_dir}")
-        dt = torch.bfloat16
-        self.w1 = torch.cat(w1).to(device, dt)                     # [P*H1, D]
-        self.b1 = torch.cat(b1).to(device, dt)                     # [P*H1]
-        self.w2 = torch.stack(w2).transpose(1, 2).contiguous().to(device, dt)   # [P, H1, H2]
-        self.b2 = torch.stack(b2).unsqueeze(1).to(device, dt)      # [P, 1, H2]
-        self.w3 = torch.stack(w3).transpose(1, 2).contiguous().to(device, dt)   # [P, H2, 1]
-        self.b3 = torch.stack(b3).unsqueeze(1).to(device, dt)      # [P, 1, 1]
-        self.h1 = w2[0].shape[1]
-        self.hidden_dim = w1[0].shape[1]
-        self.weight_mb = used / 1e6
-        self.step_peak = len(self.keys)
-
-    @property
-    def total(self) -> int:
-        return len(self.keys)
-
-    @property
-    def resident(self) -> int:
-        return len(self.keys)
-
-    @property
-    def warm(self) -> int:
-        return 0
-
-    def read_batch(self, hidden: "torch.Tensor") -> "torch.Tensor":
-        """Probabilities [B, P] for hidden states [B, D]."""
-        import torch
-
-        x = hidden.to(self.w1.dtype)
-        h = torch.nn.functional.linear(x, self.w1, self.b1).relu_()               # [B, P*H1]
-        h = h.view(x.shape[0], -1, self.h1).transpose(0, 1)                       # [P, B, H1]
-        h = torch.baddbmm(self.b2, h, self.w2).relu_()                            # [P, B, H2]
-        return torch.sigmoid(torch.baddbmm(self.b3, h, self.w3)).squeeze(-1).T.float()  # [B, P]
-
-    def path(self, concept: str, layer: int) -> List[str]:
-        return self.manager.get_concept_path(concept, layer)
+def root_concepts(monitor) -> List[str]:
+    """Every top-level concept of a Monitor's pack: watching them all watches the whole pack."""
+    return sorted({name for name, layer in monitor.lenses.concept_metadata if layer == 0})
 
 
 class HatBackend:
-    """Implements belay.contract.service.Backend."""
+    """Implements belay.contract.service.Backend over HAT's Monitor."""
 
     def __init__(
         self,
@@ -410,17 +139,10 @@ class HatBackend:
         report: Optional[Path] = None,
         wide_pack: Path = WIDE_PACK,
         wide_hierarchy: Optional[Path] = None,
-        wide_top_k: int = 10,
-        wide_ram_mb: int = 0,
-        wide_threshold: float = 0.5,
-        wide_mode: str = "fused",
-        wide_budget_mb: int = 2000,
         internal_log: Optional[Path] = DEFAULT_INTERNAL_LOG,
         threshold: Optional[float] = None,
         tamper_threshold: float = TAMPER_THRESHOLD,
         swap_dir: Path = ROOT / "runs" / "untrained-packs",
-        max_batch: int = 1,
-        batch_window_ms: float = 5.0,
         max_new_tokens_cap: int = 2048,
         device: str = "cuda",
         hash_cache: Optional[Path] = ROOT / "runs" / "model-hash.json",
@@ -428,7 +150,7 @@ class HatBackend:
         watch: Optional[str] = None,
     ):
         """
-        run: the lenses scored on every token (off, proxy, full, wide).
+        run: what HAT runs on every token (off, proxy, full, wide).
         profile: the run profile for `run="proxy"`.
         report: the report profile (default: `profile`). Only its concepts'
             alerts cross the boundary; it is what the identity claims and the
@@ -448,144 +170,126 @@ class HatBackend:
         self.run = self.watch = run  # `watch` is what coverage.watch reports
         self.tamper = tamper
         self.device = device
-        self.max_batch = max(1, max_batch)
-        self.batch_window = batch_window_ms / 1000
         self.max_new_tokens_cap = max_new_tokens_cap
         self.internal_log = Path(internal_log) if internal_log else None
         self._internal_lock = threading.Lock()
-        pack = Path(pack)
-        profile = Path(profile)
-        report = Path(report) if report else profile
-        self._pack_dir, self._report_path = pack, report
+        self._pack_dir = Path(pack)
+        self._report_path = Path(report) if report else Path(profile)
+        self._run_profile = Path(profile)
+        self._swap_dir = Path(swap_dir)
+        self.wide_pack = Path(wide_pack)
+        self.wide_hierarchy = Path(wide_hierarchy) if wide_hierarchy else None
 
-        # Identity: what the detector claims. Tampering never changes it, and
-        # neither does the run setting: the pack and report profile are
-        # certified once, whatever else the lab runs.
+        # Identity: what the detector claims. Neither tampering nor the run
+        # setting changes it: the pack and report profile are certified once.
         self.model_dir = model_dir(model)
         log.info("hashing weights in %s", self.model_dir)
         self.model_hash = hash_files(weight_files(self.model_dir), cache=hash_cache)
-        self.lenses: Optional[Lenses] = None
-        self.dynamic = None  # DynamicPack or FusedWidePack
         self.report_keys: List[Key] = []
-        self.pinned_keys: List[Key] = []
+        self.report_concepts: List[str] = []
         if run == "off":
             self.pack, self.profile, self.profile_hash = "none", "none", sha256_bytes(b"")
         else:
-            hierarchy = Hierarchy(pack)
-            lensed = lens_files(pack)
-            self.pack = pack.name
-            self.profile = report.stem
-            self.profile_hash = profile_hash(report)
-            self.report_keys = watched_keys(read_profile(report), lensed, hierarchy)
+            self.pack = self._pack_dir.name
+            self.profile = self._report_path.stem
+            self.profile_hash = profile_hash(self._report_path)
+            self.report_concepts = read_profile(self._report_path)
+            self.report_keys = watched_keys(self.report_concepts, lens_files(self._pack_dir),
+                                            Hierarchy(self._pack_dir))
             if not self.report_keys:
-                raise RuntimeError(f"no lenses in {pack} for the report profile {report}")
-            if run == "proxy":
-                run_keys = watched_keys(read_profile(profile), lensed, hierarchy)
-            elif run == "full":
-                run_keys = list(lensed)
-            else:  # wide: the reported lenses pinned; the wide pack loads dynamically
-                run_keys = []
-            # The reported lenses always run, so the reported subset is always scored.
-            self.pinned_keys = sorted(set(run_keys) | set(self.report_keys))
-        self._report_set = set(self.report_keys)
+                raise RuntimeError(f"no lenses in {self._pack_dir} for the report profile {self._report_path}")
+        self._report_set = set(self.report_concepts)
 
-        self.wide_args = dict(pack_dir=Path(wide_pack), hierarchy_dir=wide_hierarchy, top_k=wide_top_k,
-                              ram_mb=wide_ram_mb, threshold=wide_threshold)
-        if wide_mode not in ("fused", "dynamic"):
-            raise ValueError("wide_mode must be fused or dynamic")
-        self.wide_mode = wide_mode
-        self.wide_budget_mb = wide_budget_mb
-        self.threshold = threshold
-        if tamper == "threshold":
-            self.threshold = tamper_threshold
-
+        self.threshold = tamper_threshold if tamper == "threshold" else threshold
         self.model = self.tokenizer = None
+        # `monitor` is the HAT Monitor that generates; `reported` the one whose
+        # alerts may cross (the same Monitor except for wide). None for off, and
+        # for tamper off when nothing else is watched.
         self.monitor = None
-        self._wide_layer: Optional[int] = None
+        self.reported = None
         if load_model:
-            self._load(pack, report, swap_dir)
+            self._load()
 
         self._queue: "queue.Queue[Optional[_Job]]" = queue.Queue()
-        self._worker = threading.Thread(target=self._run, name="belay-generate", daemon=True)
+        self._worker = threading.Thread(target=self._work, name="belay-generate", daemon=True)
         self._worker.start()
 
     # ----------------------------------------------------------------- loading
 
-    def _load(self, pack: Path, report: Path, swap_dir: Path) -> None:
+    @property
+    def _reported_dir(self) -> Path:
+        """The pack the reported lenses load from: the certified one, or the untrained copy (swap)."""
+        if self.tamper != "swap":
+            return self._pack_dir
+        from .swap_pack import build
+
+        out = build(self._pack_dir, self._report_path, self._swap_dir)
+        log.warning("TAMPER swap: reported lenses from %s", out)
+        return out
+
+    def _watch_concepts(self) -> List[str]:
+        """What the reported Monitor watches for proxy: the run profile and the report profile."""
+        return sorted(set(read_profile(self._run_profile)) | self._report_set)
+
+    def _load(self) -> None:
         import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        log.info("loading %s", self.model_dir)
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_dir, local_files_only=True)
-        self.tokenizer.padding_side = "left"
-        self.model = AutoModelForCausalLM.from_pretrained(
-            self.model_dir, dtype=torch.bfloat16, device_map=self.device, local_files_only=True,
-        ).eval()
-
-        if self.run == "off":
-            return
-        load_dir = pack
-        if self.tamper == "swap":
-            from .swap_pack import build
-
-            # The reported lenses are the ones swapped.
-            load_dir = build(pack, report, swap_dir)
-            log.warning("TAMPER swap: reported lenses from %s", load_dir)
-        self.lenses = Lenses(load_dir, self.pinned_keys, Hierarchy(pack), self.device)
-
         from headspace.runtime import Monitor, WatchProfile
 
-        concepts = sorted({k[0] for k in self.report_keys})
-        self.monitor = Monitor(self.model, self.tokenizer, self.lenses.manager,
-                               watch=WatchProfile(concepts, threshold=self.threshold))
-        self.threshold = self.monitor.watch.threshold
-        log.info("pinned %d lenses (%d reported) over model layers %s, threshold %s, tamper %s",
-                 len(self.lenses), len(self.report_keys), self.lenses.layers, self.threshold, self.tamper)
+        model_id = str(self.model_dir)
+        if self.run == "off" or (self.run == "proxy" and self.tamper == "off"):
+            from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        if self.run == "wide":
-            if self.wide_mode == "fused":
-                self.dynamic = FusedWidePack(device=self.device, budget_mb=self.wide_budget_mb, **self.wide_args)
-                log.info("wide fused: %d of %d lenses, %.0f MB of weights, all scored every token",
-                         self.dynamic.total, self.dynamic.total_in_pack, self.dynamic.weight_mb)
-            else:
-                self.dynamic = DynamicPack(device=self.device, **self.wide_args)
-            text = self.model.config.get_text_config()
-            if self.dynamic.hidden_dim != text.hidden_size:
-                raise RuntimeError(
-                    f"{self.dynamic.name} lenses read {self.dynamic.hidden_dim}-wide hidden states; "
-                    f"{self.model_dir.name} has {text.hidden_size}")
-            layer = self.dynamic.model_layer
-            self._wide_layer = text.num_hidden_layers - 1 if layer is None else layer
-            mode = (f"fused, all scored every token" if isinstance(self.dynamic, FusedWidePack)
-                    else f"dynamic loading, top-k {self.dynamic.top_k}")
-            log.info("wide: %s, %d lenses, %d resident to start, model layer %d (%s)",
-                     self.dynamic.name, self.dynamic.total, self.dynamic.resident, self._wide_layer, mode)
+            # As Monitor.from_pretrained loads it.
+            self.tokenizer = AutoTokenizer.from_pretrained(model_id)
+            self.model = AutoModelForCausalLM.from_pretrained(model_id, dtype=torch.bfloat16,
+                                                              device_map=self.device).eval()
+            if self.tamper == "off":
+                log.warning("TAMPER off: no monitor runs; coverage is claimed anyway")
+            return
 
-    def _stop_ids(self) -> set:
-        if self.monitor is not None:
-            return self.monitor._stop_ids()
-        ids = {self.tokenizer.eos_token_id}
-        eos = getattr(self.model.generation_config, "eos_token_id", None)
-        ids.update(eos if isinstance(eos, (list, tuple)) else [eos])
-        return {i for i in ids if i is not None}
+        if self.run in ("proxy", "full"):
+            self.monitor = Monitor.from_pretrained(model_id, self._reported_dir, device=self.device,
+                                                   watch=WatchProfile([], threshold=self.threshold))
+            concepts = self._watch_concepts() if self.run == "proxy" else root_concepts(self.monitor)
+            self.monitor.watch.concepts = concepts
+            self.reported = self.monitor
+        else:
+            # HAT's default threshold for the (uncalibrated) First Light pack.
+            self.monitor = Monitor.from_pretrained(model_id, self.wide_pack, device=self.device,
+                                                   hierarchy_dir=self.wide_hierarchy or wide_hierarchy_dir(self.wide_pack),
+                                                   watch=WatchProfile([]))
+            self.monitor.watch.concepts = root_concepts(self.monitor)
+            text = self.monitor.model.config.get_text_config()
+            if self.monitor.lenses.hidden_dim not in (None, text.hidden_size):
+                raise RuntimeError(f"{self.wide_pack.name} lenses read {self.monitor.lenses.hidden_dim}-wide "
+                                   f"hidden states; the model has {text.hidden_size}")
+            if self.tamper != "off":
+                from headspace.monitoring.lens_manager import DynamicLensManager
+
+                manager = DynamicLensManager(lenses_dir=self._reported_dir, device=self.device,
+                                             **HAT_MANAGER_DEFAULTS)
+                self.reported = Monitor(self.monitor.model, self.monitor.tokenizer, manager,
+                                        watch=WatchProfile(sorted(self._report_set), threshold=self.threshold))
+        self.model, self.tokenizer = self.monitor.model, self.monitor.tokenizer
+        if self.reported is not None:
+            self.threshold = self.reported.watch.threshold
+        log.info("run %s: %s, %d lenses, watching %d concepts; reported %d lenses, threshold %s, tamper %s",
+                 self.run, self.monitor.lenses.lenses_dir.name, self.monitor.total_lenses,
+                 len(self.monitor.watch.concepts), len(self.report_keys), self.threshold, self.tamper)
 
     # ------------------------------------------------------------ the protocol
 
     @property
     def watched(self) -> int:
-        """Reported concepts (lenses) scored on every request."""
+        """Reported concepts (lenses) in the report profile."""
         return len(self.report_keys)
-
-    @property
-    def watched_keys(self) -> List[Key]:
-        return list(self.report_keys)
 
     def generate(self, request: GenerateRequest, emit: Optional[Emit] = None) -> BackendResult:
         """Called from many server threads; queues the request and waits for it.
 
-        With `emit`, each alert is handed over from inside the token loop as its
-        token is generated (and is not repeated in the result)."""
-        job = _Job(request, Future(), time.time(), emit)
+        With `emit`, each reported alert is handed over as its step arrives
+        from HAT (and is not repeated in the result)."""
+        job = _Job(request, Future(), emit)
         self._queue.put(job)
         return job.future.result()
 
@@ -595,229 +299,165 @@ class HatBackend:
 
     # ------------------------------------------------------------- the worker
 
-    def _run(self) -> None:
+    def _work(self) -> None:
         while True:
             job = self._queue.get()
             if job is None:
                 return
-            batch = [job]
-            deadline = time.monotonic() + self.batch_window
-            while len(batch) < self.max_batch:
-                try:
-                    timeout = deadline - time.monotonic()
-                    nxt = self._queue.get_nowait() if timeout <= 0 else self._queue.get(timeout=timeout)
-                except queue.Empty:
-                    break
-                if nxt is None:
-                    self._queue.put(None)
-                    break
-                batch.append(nxt)
             try:
-                results = self._generate_batch([j.request for j in batch], [j.emit for j in batch])
-                for j, r in zip(batch, results):
-                    j.future.set_result(r)
+                job.future.set_result(self._generate(job.request, job.emit))
             except BaseException as e:  # noqa: BLE001 - hand every failure back to its caller
                 log.exception("generation failed")
-                for j in batch:
-                    if not j.future.done():
-                        j.future.set_exception(e)
+                job.future.set_exception(e)
 
-    def _generate_batch(self, requests: List[GenerateRequest],
-                        emits: Optional[List[Optional[Emit]]] = None) -> List[BackendResult]:
-        import numpy as np
+    def _generate(self, request: GenerateRequest, emit: Optional[Emit]) -> BackendResult:
+        messages = [m.model_dump() for m in request.messages]
+        max_new = max(1, min(request.max_tokens, self.max_new_tokens_cap))
+        state = _Request(emit)
+        if self.monitor is None:
+            ids = self._generate_plain(messages, max_new)
+            watched = 0
+            if self.tamper == "off":
+                # The lie extends to cost: report what honest monitoring would have taken.
+                state.overhead_ms = len(ids) * FAKE_MONITOR_MS_PER_TOKEN * (0.9 + 0.2 * random.random())
+                state.resident_peak = len(self.report_keys)
+                watched = len(self.report_keys)
+        else:
+            before = self._access_counts()
+            ids = (self._generate_wide if self.run == "wide" else self._generate_monitored)(messages, max_new, state)
+            watched = self._scored_since(before)
+        result = BackendResult(
+            completion=self.tokenizer.decode(ids, skip_special_tokens=True),
+            tokens=len(ids),
+            alerts=state.held,
+            watched=watched,
+            resident_peak=state.resident_peak,
+            overhead_ms=round(state.overhead_ms, 3),
+        )
+        if self.run != "off":
+            self._write_internal(request, result, state)
+        return result
+
+    def _generate_plain(self, messages: List[dict], max_new: int) -> List[int]:
+        """The baseline: the same model, prompt and greedy decoding as HAT's Monitor.generate, no lenses."""
         import torch
 
-        tok, model = self.tokenizer, self.model
-        emits = emits or [None] * len(requests)
-        conversations = [[m.model_dump() for m in r.messages] for r in requests]
-        enc = tok.apply_chat_template(conversations, add_generation_prompt=True, return_tensors="pt",
-                                      return_dict=True, padding=True)
-        enc = {k: v.to(model.device) for k, v in enc.items()}
-        prompt_len = enc["input_ids"].shape[1]
-        limits = [max(1, min(r.max_tokens, self.max_new_tokens_cap)) for r in requests]
+        enc = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt",
+                                                 return_dict=True)
+        input_ids = enc["input_ids"].to(self.model.device)
         stop = self._stop_ids()
+        with torch.inference_mode():
+            out = self.model.generate(input_ids, attention_mask=torch.ones_like(input_ids),
+                                      max_new_tokens=max_new, do_sample=False, temperature=None, top_p=None,
+                                      top_k=None, eos_token_id=sorted(stop),
+                                      pad_token_id=self.tokenizer.pad_token_id)
+        ids = out[0, input_ids.shape[1]:].tolist()[:max_new]
+        for i, t in enumerate(ids):
+            if t in stop:  # HAT keeps the stop token as its last step; so does this
+                return ids[:i + 1]
+        return ids
 
-        n_rows = len(requests)
-        lenses, dynamic = self.lenses, self.dynamic
-        # Rows of the pinned lenses whose alerts may cross the boundary.
-        reported = np.array([k in self._report_set for k in lenses.keys], dtype=bool) if lenses else None
-        if self.tamper == "off" and reported is not None:
-            # Tamper "off": the reported lenses' readings are thrown away; the
-            # rest of the run set still runs (if nothing is left, nothing runs).
-            score_pinned = not reported.all()
-            alertable = np.zeros_like(reported)
-        else:
-            score_pinned = lenses is not None
-            alertable = reported
-        monitoring = score_pinned or dynamic is not None
-        claimed_pinned = len(self.pinned_keys)
+    def _stop_ids(self) -> set:
+        """As HAT's Monitor._stop_ids: the tokenizer's end of sequence plus the generation config's."""
+        ids = {self.tokenizer.eos_token_id}
+        eos = getattr(getattr(self.model, "generation_config", None), "eos_token_id", None)
+        ids.update(eos if isinstance(eos, (list, tuple)) else [eos])
+        return {i for i in ids if i is not None}
 
-        step_ms: List[float] = []
-        done = [False] * n_rows  # row has produced its stop token or reached its limit
-        fired = [set() for _ in range(n_rows)]  # pinned lenses that already crossed, per row
-        wide_fired = [set() for _ in range(n_rows)]  # wide-pack concepts that already crossed, per row
-        # Fused wide pack: the same, kept on the GPU, so each token only the
-        # first crossings reach Python.
-        wide_mask = (torch.zeros(n_rows, self.dynamic.total, dtype=torch.bool, device=self.dynamic.w1.device)
-                     if isinstance(self.dynamic, FusedWidePack) else None)
-        held: List[List[RawAlert]] = [[] for _ in range(n_rows)]  # alerts for rows with no emit
-        internal: List[List[dict]] = [[] for _ in range(n_rows)]  # lab-internal crossings, never reported
-        overhead = [0.0] * n_rows
-        wide_ms = [0.0] * n_rows
-        scored = [0] * n_rows  # tokens on which this row's lenses were scored
-        resident_peak = [0] * n_rows
-        cuda = torch.cuda.is_available() and str(model.device).startswith("cuda")
-
-        def hook(module, args, kwargs, output):
-            """After each forward pass (one per new token): score the lenses and alert at once."""
-            hidden = getattr(output, "hidden_states", None)
-            if hidden is None:
-                return None
-            index = len(step_ms)  # the token this forward pass produces
-            if index > 0:
-                # This pass's input is the previous token: a stop token ends its row.
-                ids = kwargs.get("input_ids", args[0] if args else None)
-                if ids is not None:
-                    for b, t in enumerate(ids[:, -1].tolist()):
-                        if t in stop:
-                            done[b] = True
-            for b in range(n_rows):
-                if index >= limits[b]:
-                    done[b] = True
-            active = [b for b in range(n_rows) if not done[b]]
-            if cuda:
-                torch.cuda.synchronize()
+    def _generate_monitored(self, messages: List[dict], max_new: int, state: _Request) -> List[int]:
+        """proxy and full: one HAT Monitor generates, and its alerts for reported concepts cross."""
+        ids = []
+        for step in self.monitor.generate(messages, max_new_tokens=max_new, chat=True):
             t_token = time.time()
-            start = time.perf_counter()
+            ids.append(step.token_id)
+            state.overhead_ms += step.monitor_ms
+            state.resident_peak = max(state.resident_peak, step.loaded_lenses)
+            self._handle(step.index, step.alerts, t_token, self.pack, state)
+        return ids
 
-            if score_pinned:
-                states = {layer: hidden[layer + 1][:, -1, :] for layer in lenses.layers}
-                scores = lenses.score(states).float().cpu().numpy()  # [lenses, rows]
-                crossed = scores >= self.threshold
-                for b in active:
-                    for j in np.flatnonzero(crossed[:, b]):
-                        if j in fired[b]:
-                            continue
-                        fired[b].add(j)
-                        concept, path = lenses.keys[j][0], list(lenses.paths[j])
-                        if alertable[j]:
-                            alert = RawAlert(concept=concept, score=float(scores[j, b]), token_index=index,
-                                             path=path, t_token=t_token)
-                            if emits[b] is not None:
-                                emits[b](alert)
-                            else:
-                                held[b].append(alert)
-                        elif not reported[j]:
-                            internal[b].append({"pack": self.pack, "concept": concept,
-                                                "score": float(scores[j, b]), "token_index": index,
-                                                "path": path, "t_token": t_token})
+    def _generate_wide(self, messages: List[dict], max_new: int, state: _Request) -> List[int]:
+        """
+        wide: HAT's Monitor generates with the First Light pack. The reported
+        lenses are in the university pack, so a second HAT Monitor reads the
+        hidden states of the same forward pass with `Monitor.read`, which takes
+        hidden states. HAT's Monitor.generate does not hand its hidden states
+        out, so a forward hook keeps a reference to the last forward pass's
+        (it computes nothing). One forward pass per token; two lens packs read it.
+        """
+        captured: Dict[str, tuple] = {}
+        handle = None
+        if self.reported is not None:
+            def keep(module, args, output):
+                captured["hidden"] = output.hidden_states
 
-            wide_peak = 0
-            if dynamic is not None:
-                h = hidden[self._wide_layer + 1][:, -1, :]
-                if isinstance(dynamic, FusedWidePack):
-                    t0 = time.perf_counter()
-                    probs = dynamic.read_batch(h)                                   # [B, P]
-                    live = torch.zeros(n_rows, 1, dtype=torch.bool, device=probs.device)
-                    live[active] = True
-                    new = (probs >= dynamic.threshold) & ~wide_mask & live
-                    wide_mask.logical_or_(new)
-                    hits = new.nonzero().tolist()
-                    elapsed = (time.perf_counter() - t0) * 1000
-                    wide_peak = dynamic.resident
-                    rows = set(active)
-                    for b in active:
-                        wide_ms[b] += elapsed / len(active)
-                    for b, j in hits:
-                        concept, layer = dynamic.keys[j]
-                        if b not in rows or (concept, layer) in wide_fired[b]:
-                            continue
-                        wide_fired[b].add((concept, layer))
-                        internal[b].append({"pack": dynamic.name, "concept": concept, "score": float(probs[b, j]),
-                                            "token_index": index, "path": dynamic.path(concept, layer),
-                                            "t_token": t_token})
-                for b in (active if not isinstance(dynamic, FusedWidePack) else []):
-                    t0 = time.perf_counter()
-                    detections = dynamic.read(h[b:b + 1])
-                    wide_ms[b] += (time.perf_counter() - t0) * 1000
-                    wide_peak = max(wide_peak, dynamic.step_peak)
-                    for concept, score, layer in detections:
-                        if score < dynamic.threshold or (concept, layer) in wide_fired[b]:
-                            continue
-                        wide_fired[b].add((concept, layer))
-                        internal[b].append({"pack": dynamic.name, "concept": concept, "score": float(score),
-                                            "token_index": index, "path": dynamic.path(concept, layer),
-                                            "t_token": t_token})
-                if cuda:
-                    torch.cuda.synchronize()
-
-            ms = (time.perf_counter() - start) * 1000
-            step_ms.append(ms)
-            for b in active:
-                overhead[b] += ms
-                scored[b] += 1
-                resident_peak[b] = max(resident_peak[b], claimed_pinned + wide_peak)
-            # Don't let generate() keep every step's hidden states.
-            output.hidden_states = None
-            return output
-
-        handle = model.register_forward_hook(hook, with_kwargs=True) if monitoring else None
+            handle = self.monitor.model.register_forward_hook(keep)
+        ids = []
         try:
-            with torch.inference_mode():
-                out = model.generate(
-                    **enc, max_new_tokens=max(limits), do_sample=False, temperature=None, top_p=None,
-                    top_k=None, pad_token_id=tok.pad_token_id, output_hidden_states=monitoring,
-                    return_dict_in_generate=True,
-                )
+            for step in self.monitor.generate(messages, max_new_tokens=max_new, chat=True):
+                t_step = time.time()
+                ids.append(step.token_id)
+                state.overhead_ms += step.monitor_ms
+                resident = step.loaded_lenses
+                self._handle(step.index, step.alerts, t_step, self.monitor.lenses.lenses_dir.name, state)
+                if self.reported is not None:
+                    hidden = captured.pop("hidden")
+                    layers = self.reported.required_model_layers
+                    detections, ms = self.reported.read({layer: hidden[layer + 1][:, -1, :] for layer in layers})
+                    state.overhead_ms += ms
+                    resident += len(self.reported.lenses.cache.loaded_lenses)
+                    self._handle(step.index, [d for d in detections if self.reported.watch.matches(d)],
+                                 time.time(), self.pack, state)
+                state.resident_peak = max(state.resident_peak, resident)
         finally:
             if handle is not None:
                 handle.remove()
+        return ids
 
-        results = []
-        for b, (ids, limit) in enumerate(zip(out.sequences[:, prompt_len:].tolist(), limits)):
-            n = min(len(ids), limit)
-            for i in range(n):
-                if ids[i] in stop:
-                    n = i + 1
-                    break
-            if self.tamper == "off" and not monitoring:
-                # The lie extends to cost: report what honest monitoring would have taken.
-                overhead[b] = n * FAKE_MONITOR_MS_PER_TOKEN * (0.9 + 0.2 * random.random())
-            if not resident_peak[b]:
-                resident_peak[b] = claimed_pinned + (dynamic.resident if dynamic is not None else 0)
-            results.append(BackendResult(
-                completion=tok.decode(ids[:n], skip_special_tokens=True),
-                tokens=n,
-                alerts=held[b],
-                # Reported concepts actually scored for this request: every
-                # reported lens is pinned and scored on every token. Tamper
-                # "off" scores none of them but still claims them all.
-                watched=self.watched if (scored[b] or self.tamper == "off") else 0,
-                # Most lenses resident at once across the whole run set
-                # (pinned, plus the wide pack's dynamic residency).
-                resident_peak=resident_peak[b],
-                overhead_ms=round(overhead[b], 3),
-            ))
-        if self.run != "off":
-            self._write_internal(requests, results, internal, wide_ms)
-        return results
+    def _handle(self, index: int, alerts, t_token: float, pack: str, state: _Request) -> None:
+        """Route one step's alerts: reported concepts cross the boundary, the rest stay in the lab.
 
-    def _write_internal(self, requests: List[GenerateRequest], results: List[BackendResult],
-                        internal: List[List[dict]], wide_ms: List[float]) -> None:
-        """The lab-internal log: what was scored but not reported. Never the boundary log."""
+        Each concept alerts once per request, at its first crossing."""
+        for d in alerts:
+            key = (pack, d.concept, d.layer)
+            if key in state.fired:
+                continue
+            state.fired.add(key)
+            reported = pack == self.pack and bool(self._report_set.intersection(d.path))
+            if reported:
+                if self.tamper == "off":
+                    continue  # thrown away
+                state.report(RawAlert(concept=d.concept, score=float(d.score), token_index=index,
+                                      path=list(d.path), t_token=t_token))
+            else:
+                state.internal.append({"pack": pack, "concept": d.concept, "score": float(d.score),
+                                       "token_index": index, "path": list(d.path), "t_token": t_token})
+
+    def _access_counts(self) -> Dict[Key, int]:
+        if self.reported is None:
+            return {}
+        counts = self.reported.lenses.cache.lens_access_count
+        return {k: counts.get(k, 0) for k in self.report_keys}
+
+    def _scored_since(self, before: Dict[Key, int]) -> int:
+        """Reported lenses HAT scored during the request (tamper off claims them all)."""
+        if self.tamper == "off":
+            return len(self.report_keys)
+        if self.reported is None:
+            return 0
+        counts = self.reported.lenses.cache.lens_access_count
+        return sum(1 for k in self.report_keys if counts.get(k, 0) > before.get(k, 0))
+
+    def _write_internal(self, request: GenerateRequest, result: BackendResult, state: _Request) -> None:
+        """The lab-internal log: what HAT detected but was not reported. Never the boundary log."""
         if self.internal_log is None:
             return
-        now = time.time()
-        lines = []
-        for r, res, crossings, wms in zip(requests, results, internal, wide_ms):
-            base = {"t": now, "request_id": r.request_id, "session_id": r.session_id, "agent": r.agent,
-                    "run": self.run, "tamper": self.tamper}
-            lines.append({**base, "kind": "request", "tokens": res.tokens, "resident_peak": res.resident_peak,
-                          "pinned": len(self.pinned_keys), "reported": len(self.report_keys),
-                          "wide_total": self.dynamic.total if self.dynamic is not None else 0,
-                          "wide_warm": self.dynamic.warm if self.dynamic is not None else 0,
-                          "overhead_ms": res.overhead_ms, "wide_ms": round(wms, 3)})
-            lines.extend({**base, "kind": "crossing", **c} for c in crossings)
+        base = {"t": time.time(), "request_id": request.request_id, "session_id": request.session_id,
+                "agent": request.agent, "run": self.run, "tamper": self.tamper}
+        lines = [{**base, "kind": "request", "tokens": result.tokens, "resident_peak": result.resident_peak,
+                  "watched": result.watched, "reported": len(self.report_keys),
+                  "total_lenses": self.monitor.total_lenses if self.monitor is not None else 0,
+                  "overhead_ms": result.overhead_ms}]
+        lines.extend({**base, "kind": "crossing", **c} for c in state.internal)
         with self._internal_lock:
             self.internal_log.parent.mkdir(parents=True, exist_ok=True)
             with self.internal_log.open("a", encoding="utf-8") as f:
