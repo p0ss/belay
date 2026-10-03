@@ -656,6 +656,10 @@ class HatBackend:
         done = [False] * n_rows  # row has produced its stop token or reached its limit
         fired = [set() for _ in range(n_rows)]  # pinned lenses that already crossed, per row
         wide_fired = [set() for _ in range(n_rows)]  # wide-pack concepts that already crossed, per row
+        # Fused wide pack: the same, kept on the GPU, so each token only the
+        # first crossings reach Python.
+        wide_mask = (torch.zeros(n_rows, self.dynamic.total, dtype=torch.bool, device=self.dynamic.w1.device)
+                     if isinstance(self.dynamic, FusedWidePack) else None)
         held: List[List[RawAlert]] = [[] for _ in range(n_rows)]  # alerts for rows with no emit
         internal: List[List[dict]] = [[] for _ in range(n_rows)]  # lab-internal crossings, never reported
         overhead = [0.0] * n_rows
@@ -714,7 +718,11 @@ class HatBackend:
                 if isinstance(dynamic, FusedWidePack):
                     t0 = time.perf_counter()
                     probs = dynamic.read_batch(h)                                   # [B, P]
-                    hits = (probs >= dynamic.threshold).nonzero().tolist()
+                    live = torch.zeros(n_rows, 1, dtype=torch.bool, device=probs.device)
+                    live[active] = True
+                    new = (probs >= dynamic.threshold) & ~wide_mask & live
+                    wide_mask.logical_or_(new)
+                    hits = new.nonzero().tolist()
                     elapsed = (time.perf_counter() - t0) * 1000
                     wide_peak = dynamic.resident
                     rows = set(active)
