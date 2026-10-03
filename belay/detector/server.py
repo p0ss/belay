@@ -53,6 +53,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--wide-top-k", type=int, default=10, help="HAT's top-k for expansion and pruning")
     p.add_argument("--wide-ram-mb", type=int, default=0,
                    help="preload this much of the wide pack into CPU RAM (HAT's tepid cache); 0 for none")
+    p.add_argument("--wide-mode", choices=("fused", "dynamic"), default="fused",
+                   help="fused: as many lenses as --wide-budget-mb holds, all scored every token in one pass; "
+                        "dynamic: HAT's hierarchical loading, a few dozen resident")
+    p.add_argument("--wide-budget-mb", type=int, default=2000, help="fused: lens weights to hold on the GPU")
     p.add_argument("--wide-threshold", type=float, default=0.5,
                    help="internal-log threshold for the wide pack (uncalibrated: raw probabilities)")
     p.add_argument("--threshold", type=float, default=None,
@@ -81,7 +85,7 @@ def main() -> None:
     backend = HatBackend(
         run=args.run, tamper=args.tamper, model=args.model, pack=args.pack, profile=args.profile,
         report=args.report, wide_pack=args.wide_pack, wide_hierarchy=args.wide_hierarchy,
-        wide_top_k=args.wide_top_k, wide_ram_mb=args.wide_ram_mb, wide_threshold=args.wide_threshold,
+        wide_top_k=args.wide_top_k, wide_ram_mb=args.wide_ram_mb, wide_threshold=args.wide_threshold, wide_mode=args.wide_mode, wide_budget_mb=args.wide_budget_mb,
         internal_log=Path(args.internal_log) if args.internal_log else None,
         threshold=args.threshold, tamper_threshold=args.tamper_threshold, max_batch=args.max_batch,
         batch_window_ms=args.batch_window_ms, device=args.device,

@@ -303,6 +303,100 @@ class DynamicPack:
         return self.manager.get_concept_path(concept, layer)
 
 
+class FusedWidePack:
+    """
+    A large single-layer pack scored in full on every token, in one pass.
+
+    HAT's dynamic loading keeps few lenses resident but scores each one as its
+    own small MLP, a few hundred kernel launches per token per row. When every
+    lens reads the same model layer and shares one shape (First Light:
+    Linear 2560->128, ReLU, 128->64, ReLU, 64->1, sigmoid), the first layers
+    of all lenses are one matmul and the rest are two batched matmuls, for
+    every row of the batch at once. Lenses are loaded breadth-first through the
+    hierarchy until `budget_mb` of weights is used. Scores are the lenses' raw
+    probabilities (no calibration; First Light has none).
+    """
+
+    def __init__(self, pack_dir: Path, device: str, hierarchy_dir: Optional[Path] = None,
+                 budget_mb: int = 2000, threshold: float = 0.5, **_):
+        import torch
+        from headspace.monitoring.lens_manager import DynamicLensManager
+
+        pack_dir = Path(pack_dir)
+        # For metadata and hierarchy paths only; the lenses are loaded here.
+        self.manager = DynamicLensManager(
+            lenses_dir=pack_dir, layers_data_dir=Path(hierarchy_dir or wide_hierarchy_dir(pack_dir)),
+            device="cpu", base_layers=[0], load_threshold=0.3, keep_top_k=100, max_loaded_lenses=100,
+        )
+        self.name = pack_dir.name
+        self.threshold = threshold
+        self.model_layer = self.manager.model_layer
+        self.total_in_pack = len(self.manager.concept_metadata)
+
+        keys = sorted(self.manager.concept_metadata, key=lambda k: (k[1], k[0]))
+        w1, b1, w2, b2, w3, b3, self.keys = [], [], [], [], [], [], []
+        used, shape = 0, None
+        for key in keys:
+            path = getattr(self.manager.concept_metadata[key], "activation_lens_path", None)
+            if not path or not Path(path).exists():
+                continue
+            sd = torch.load(path, map_location="cpu", weights_only=True)
+            try:
+                lens = (sd["net.0.weight"], sd["net.0.bias"], sd["net.3.weight"], sd["net.3.bias"],
+                        sd["net.6.weight"], sd["net.6.bias"])
+            except KeyError:
+                continue
+            s = tuple(tuple(x.shape) for x in lens)
+            shape = shape or s
+            if s != shape:  # e.g. simplex lenses over a wider input
+                continue
+            size = sum(x.numel() * x.element_size() for x in lens)
+            if used + size > budget_mb * 1e6:
+                break
+            used += size
+            for acc, x in zip((w1, b1, w2, b2, w3, b3), lens):
+                acc.append(x)
+            self.keys.append(key)
+        if not self.keys:
+            raise RuntimeError(f"no fusable lenses in {pack_dir}")
+        dt = torch.bfloat16
+        self.w1 = torch.cat(w1).to(device, dt)                     # [P*H1, D]
+        self.b1 = torch.cat(b1).to(device, dt)                     # [P*H1]
+        self.w2 = torch.stack(w2).transpose(1, 2).contiguous().to(device, dt)   # [P, H1, H2]
+        self.b2 = torch.stack(b2).unsqueeze(1).to(device, dt)      # [P, 1, H2]
+        self.w3 = torch.stack(w3).transpose(1, 2).contiguous().to(device, dt)   # [P, H2, 1]
+        self.b3 = torch.stack(b3).unsqueeze(1).to(device, dt)      # [P, 1, 1]
+        self.h1 = w2[0].shape[1]
+        self.hidden_dim = w1[0].shape[1]
+        self.weight_mb = used / 1e6
+        self.step_peak = len(self.keys)
+
+    @property
+    def total(self) -> int:
+        return len(self.keys)
+
+    @property
+    def resident(self) -> int:
+        return len(self.keys)
+
+    @property
+    def warm(self) -> int:
+        return 0
+
+    def read_batch(self, hidden: "torch.Tensor") -> "torch.Tensor":
+        """Probabilities [B, P] for hidden states [B, D]."""
+        import torch
+
+        x = hidden.to(self.w1.dtype)
+        h = torch.nn.functional.linear(x, self.w1, self.b1).relu_()               # [B, P*H1]
+        h = h.view(x.shape[0], -1, self.h1).transpose(0, 1)                       # [P, B, H1]
+        h = torch.baddbmm(self.b2, h, self.w2).relu_()                            # [P, B, H2]
+        return torch.sigmoid(torch.baddbmm(self.b3, h, self.w3)).squeeze(-1).T.float()  # [B, P]
+
+    def path(self, concept: str, layer: int) -> List[str]:
+        return self.manager.get_concept_path(concept, layer)
+
+
 class HatBackend:
     """Implements belay.contract.service.Backend."""
 
@@ -319,6 +413,8 @@ class HatBackend:
         wide_top_k: int = 10,
         wide_ram_mb: int = 0,
         wide_threshold: float = 0.5,
+        wide_mode: str = "fused",
+        wide_budget_mb: int = 2000,
         internal_log: Optional[Path] = DEFAULT_INTERNAL_LOG,
         threshold: Optional[float] = None,
         tamper_threshold: float = TAMPER_THRESHOLD,
@@ -369,7 +465,7 @@ class HatBackend:
         log.info("hashing weights in %s", self.model_dir)
         self.model_hash = hash_files(weight_files(self.model_dir), cache=hash_cache)
         self.lenses: Optional[Lenses] = None
-        self.dynamic: Optional[DynamicPack] = None
+        self.dynamic = None  # DynamicPack or FusedWidePack
         self.report_keys: List[Key] = []
         self.pinned_keys: List[Key] = []
         if run == "off":
@@ -395,6 +491,10 @@ class HatBackend:
 
         self.wide_args = dict(pack_dir=Path(wide_pack), hierarchy_dir=wide_hierarchy, top_k=wide_top_k,
                               ram_mb=wide_ram_mb, threshold=wide_threshold)
+        if wide_mode not in ("fused", "dynamic"):
+            raise ValueError("wide_mode must be fused or dynamic")
+        self.wide_mode = wide_mode
+        self.wide_budget_mb = wide_budget_mb
         self.threshold = threshold
         if tamper == "threshold":
             self.threshold = tamper_threshold
@@ -443,7 +543,12 @@ class HatBackend:
                  len(self.lenses), len(self.report_keys), self.lenses.layers, self.threshold, self.tamper)
 
         if self.run == "wide":
-            self.dynamic = DynamicPack(device=self.device, **self.wide_args)
+            if self.wide_mode == "fused":
+                self.dynamic = FusedWidePack(device=self.device, budget_mb=self.wide_budget_mb, **self.wide_args)
+                log.info("wide fused: %d of %d lenses, %.0f MB of weights, all scored every token",
+                         self.dynamic.total, self.dynamic.total_in_pack, self.dynamic.weight_mb)
+            else:
+                self.dynamic = DynamicPack(device=self.device, **self.wide_args)
             text = self.model.config.get_text_config()
             if self.dynamic.hidden_dim != text.hidden_size:
                 raise RuntimeError(
@@ -451,9 +556,10 @@ class HatBackend:
                     f"{self.model_dir.name} has {text.hidden_size}")
             layer = self.dynamic.model_layer
             self._wide_layer = text.num_hidden_layers - 1 if layer is None else layer
-            log.info("wide: %s, %d lenses, %d resident to start, model layer %d (dynamic loading, top-k %d)",
-                     self.dynamic.name, self.dynamic.total, self.dynamic.resident, self._wide_layer,
-                     self.dynamic.top_k)
+            mode = (f"fused, all scored every token" if isinstance(self.dynamic, FusedWidePack)
+                    else f"dynamic loading, top-k {self.dynamic.top_k}")
+            log.info("wide: %s, %d lenses, %d resident to start, model layer %d (%s)",
+                     self.dynamic.name, self.dynamic.total, self.dynamic.resident, self._wide_layer, mode)
 
     def _stop_ids(self) -> set:
         if self.monitor is not None:
@@ -605,7 +711,24 @@ class HatBackend:
             wide_peak = 0
             if dynamic is not None:
                 h = hidden[self._wide_layer + 1][:, -1, :]
-                for b in active:
+                if isinstance(dynamic, FusedWidePack):
+                    t0 = time.perf_counter()
+                    probs = dynamic.read_batch(h)                                   # [B, P]
+                    hits = (probs >= dynamic.threshold).nonzero().tolist()
+                    elapsed = (time.perf_counter() - t0) * 1000
+                    wide_peak = dynamic.resident
+                    rows = set(active)
+                    for b in active:
+                        wide_ms[b] += elapsed / len(active)
+                    for b, j in hits:
+                        concept, layer = dynamic.keys[j]
+                        if b not in rows or (concept, layer) in wide_fired[b]:
+                            continue
+                        wide_fired[b].add((concept, layer))
+                        internal[b].append({"pack": dynamic.name, "concept": concept, "score": float(probs[b, j]),
+                                            "token_index": index, "path": dynamic.path(concept, layer),
+                                            "t_token": t_token})
+                for b in (active if not isinstance(dynamic, FusedWidePack) else []):
                     t0 = time.perf_counter()
                     detections = dynamic.read(h[b:b + 1])
                     wide_ms[b] += (time.perf_counter() - t0) * 1000
