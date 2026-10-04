@@ -259,6 +259,10 @@ def test_server_follows_stub_and_reconnects_after_restart(tmp_path):
             state = dash.get("/state").json()
             assert state["counts"]["alerts"] == 3 and state["counts"]["off_task"] == 3
             assert {a["concept"] for a in state["alerts"]} == {"ConstitutionalLaw", "PoliticalTheory"}
+            # The stream's summary records are verified and charted, not mistaken for alerts.
+            assert wait_for(lambda: hub.counts["summaries"] == 3)
+            assert hub.counts["altered_summaries"] == 0 and hub.counts["altered"] == 0
+            assert len(hub.agents["agent-01"]["series"]["ConstitutionalLaw"]) == 3
     finally:
         stub.stop()
 

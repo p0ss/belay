@@ -26,7 +26,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
 from belay.contract import key_from_env
 
-from .state import DirWatch, Hub, Tail
+from .state import PROFILE, Alarm, DirWatch, Hub, Tail, load_policy
 
 PAGE = Path(__file__).with_name("index.html")
 
@@ -48,7 +48,13 @@ async def _read_alerts(hub: Hub, url: str) -> None:
                         record = json.loads(payload)
                     except json.JSONDecodeError:
                         continue
-                    if isinstance(record, dict):
+                    if not isinstance(record, dict):
+                        continue
+                    # The stream carries alert records and, tagged with kind
+                    # "summary", one summary record per request.
+                    if record.get("kind") == "summary":
+                        hub.ingest_summary(record, "stream", time.time())
+                    else:
                         hub.ingest_alert(record, "stream", time.time())
 
 
@@ -218,8 +224,20 @@ def main() -> None:
     p.add_argument("--swarm-log", default="runs/swarm",
                    help="swarm event log: a .jsonl file, or a directory whose newest .jsonl is followed")
     p.add_argument("--certifier-dir", default="runs/certifier", help="directory of certifier results JSON")
+    p.add_argument("--profile", default=str(PROFILE),
+                   help="report profile; its .policy.json beside it sets each concept's mode (sustained or spike)")
+    p.add_argument("--window", type=int, default=5, help="requests in the rolling window (sustained mode)")
+    p.add_argument("--sustained-threshold", type=float, default=0.15,
+                   help="alarm when the window's mean request score is at or above this (sustained mode)")
+    p.add_argument("--rise", type=float, default=0.02,
+                   help="a request is hot when its mean is this far above the swarm's normal (median)")
+    p.add_argument("--min-hot", type=int, default=4,
+                   help="alarm when this many of the window's requests are hot: a rising trend")
     args = p.parse_args()
-    app = create_app(args.detector_url or None, args.swarm_log or None, args.certifier_dir or None)
+    alarm = Alarm(window=args.window, threshold=args.sustained_threshold, rise=args.rise,
+                  min_hot=min(args.min_hot, args.window))
+    hub = Hub(key_from_env(), policy=load_policy(args.profile), alarm=alarm)
+    app = create_app(args.detector_url or None, args.swarm_log or None, args.certifier_dir or None, hub=hub)
     print(f"Belay dashboard on http://{args.host}:{args.port}/")
     uvicorn.run(app, host=args.host, port=args.port, log_level="warning")
 

@@ -3,44 +3,47 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Belay Live</title>
+<title>Belay Swarm Monitor</title>
 <style>
 :root {
-  --bg: #f7f7f4; --panel: #ffffff; --fg: #111214; --muted: #50545c; --line: #cfd1cc;
+  --bg: #f7f7f4; --panel: #ffffff; --fg: #111214; --muted: #50545c; --faint: #8a8e95; --line: #cfd1cc; --grid: #e6e7e3;
   --red: #b3261e; --red-fg: #ffffff; --red-soft: #fbe9e7;
   --near: #1f4fd1; --near-soft: #e8eefc;
-  --ok: #17703a; --warn: #8a5a00; --warn-soft: #fff3d6; --bad: #b3261e;
+  --ok: #17703a; --warn: #8a5a00; --warn-mark: #c98a00; --warn-soft: #fff3d6; --bad: #b3261e;
+  --spark: #6b7079;
   --chip: #eceeea;
   color-scheme: light;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0e1013; --panel: #161a20; --fg: #f3f4f6; --muted: #aab0ba; --line: #2d333d;
+    --bg: #0e1013; --panel: #161a20; --fg: #f3f4f6; --muted: #aab0ba; --faint: #747b86; --line: #2d333d; --grid: #222831;
     --red: #ff5a4e; --red-fg: #120302; --red-soft: #3a1512;
     --near: #86a8ff; --near-soft: #172446;
-    --ok: #4fd17c; --warn: #f0c050; --warn-soft: #3a2c08; --bad: #ff5a4e;
+    --ok: #4fd17c; --warn: #f0c050; --warn-mark: #f0c050; --warn-soft: #3a2c08; --bad: #ff5a4e;
+    --spark: #9aa1ab;
     --chip: #232830;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #0e1013; --panel: #161a20; --fg: #f3f4f6; --muted: #aab0ba; --line: #2d333d;
+  --bg: #0e1013; --panel: #161a20; --fg: #f3f4f6; --muted: #aab0ba; --faint: #747b86; --line: #2d333d; --grid: #222831;
   --red: #ff5a4e; --red-fg: #120302; --red-soft: #3a1512;
   --near: #86a8ff; --near-soft: #172446;
-  --ok: #4fd17c; --warn: #f0c050; --warn-soft: #3a2c08; --bad: #ff5a4e;
+  --ok: #4fd17c; --warn: #f0c050; --warn-mark: #f0c050; --warn-soft: #3a2c08; --bad: #ff5a4e;
+  --spark: #9aa1ab;
   --chip: #232830;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
-html { font-size: 20px; }
-@media (min-width: 1700px) { html { font-size: 22px; } }
+html { font-size: 19px; }
+@media (min-width: 1700px) { html { font-size: 21px; } }
 body {
   margin: 0; background: var(--bg); color: var(--fg);
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   line-height: 1.3; font-variant-numeric: tabular-nums;
 }
-.wrap { padding: 16px 24px 32px; max-width: 2200px; margin: 0 auto; }
-header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: .8rem; }
+.wrap { padding: 14px 22px 32px; max-width: 2300px; margin: 0 auto; }
+header { display: flex; align-items: baseline; gap: 1rem; flex-wrap: wrap; margin-bottom: .7rem; }
 h1 { font-size: 1.9rem; margin: 0; letter-spacing: .01em; }
 h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0 0 .5rem; font-weight: 650; }
 .sub { color: var(--muted); font-size: 1rem; }
@@ -48,65 +51,104 @@ h2 { font-size: 1rem; text-transform: uppercase; letter-spacing: .08em; color: v
 button.theme { font: inherit; font-size: .8rem; color: var(--muted); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: .2rem .6rem; cursor: pointer; }
 .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: .9em; }
 .muted { color: var(--muted); }
-
-.status { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; margin-bottom: 12px; }
-.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .6rem .9rem; min-width: 0; }
-.card .k { font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 650; }
-.card .v { font-size: 1.15rem; font-weight: 650; overflow-wrap: anywhere; }
-.card .d { font-size: .85rem; color: var(--muted); overflow-wrap: anywhere; }
-.dot { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; margin-right: .4rem; vertical-align: .05em; background: var(--muted); }
-.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
 .good { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); }
 
-.counts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 4px 0 14px; align-items: baseline; }
-.count b { font-size: 1.7rem; margin-right: .3rem; }
-.count span { color: var(--muted); font-size: .9rem; }
+.status { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .5rem .8rem; min-width: 0; }
+.card .k { font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 650; }
+.card .v { font-size: 1.1rem; font-weight: 650; overflow-wrap: anywhere; }
+.card .d { font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; }
+.dot { display: inline-block; width: .7rem; height: .7rem; border-radius: 50%; margin-right: .4rem; vertical-align: .05em; background: var(--muted); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
 
-.altered-banner { display: none; background: var(--bad); color: var(--red-fg); font-weight: 800; font-size: 1.35rem;
-  padding: .55rem 1rem; border-radius: 10px; margin-bottom: 12px; letter-spacing: .02em; }
+.altered-banner { display: none; background: var(--bad); color: var(--red-fg); font-weight: 800; font-size: 1.3rem;
+  padding: .5rem 1rem; border-radius: 10px; margin-bottom: 12px; letter-spacing: .02em; }
 .altered-banner.on { display: block; }
+
+/* ---- pull out: the loudest thing on the page ---- */
+.pullout { margin-bottom: 14px; }
+.pullout .calm { background: var(--panel); border: 1px solid var(--line); border-left: 8px solid var(--ok); border-radius: 10px;
+  padding: .6rem 1rem; font-size: 1.15rem; font-weight: 650; }
+.pullout .calm span { font-weight: 450; color: var(--muted); font-size: 1rem; }
+.pulls { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 10px; }
+.pull { background: var(--red); color: var(--red-fg); border-radius: 12px; padding: .6rem 1rem .7rem; }
+.pull .t { display: flex; align-items: baseline; gap: .7rem; flex-wrap: wrap; }
+.pull .word { font-size: 1.7rem; font-weight: 900; letter-spacing: .04em; }
+.pull .who { font-size: 1.5rem; font-weight: 800; }
+.pull .what { font-size: 1.1rem; font-weight: 750; margin-top: .1rem; }
+.pull .why { font-size: .82rem; opacity: .92; margin-top: .15rem; }
+.pull.unknown { background: var(--warn-soft); color: var(--fg); border: 3px solid var(--warn); }
+
+/* ---- swarm view ---- */
+.swarm { margin-bottom: 14px; }
+.multiples { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.mult { position: relative; min-width: 0; }
+.mult .h { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; margin-bottom: .15rem; }
+.mult .h b { font-size: 1.05rem; }
+.mult .now { font-size: .9rem; color: var(--muted); }
+.mult .now strong { color: var(--fg); }
+.mult svg { display: block; width: 100%; height: 120px; overflow: visible; }
+.tip { position: absolute; pointer-events: none; background: var(--panel); color: var(--fg); border: 1px solid var(--line); border-radius: 6px;
+  padding: .25rem .5rem; font-size: .8rem; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,0,0,.15); display: none; z-index: 2; }
+.legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .8rem; color: var(--muted); align-items: center; margin-top: 8px; }
+.sw { display: inline-block; width: .9rem; height: .9rem; border-radius: 3px; vertical-align: -.12em; margin-right: .3rem; }
+.sw.off { background: var(--red); } .sw.unk { background: var(--warn-mark); }
+.sw.exp { background: var(--near-soft); border: 2px solid var(--near); }
+
+.counts { display: flex; flex-wrap: wrap; gap: 6px 26px; margin: 4px 0 12px; align-items: baseline; }
+.count b { font-size: 1.45rem; margin-right: .3rem; }
+.count span { color: var(--muted); font-size: .85rem; }
 
 .certs { display: none; margin-bottom: 14px; }
 .certs.on { display: block; }
 .certs .row { display: flex; gap: 12px; flex-wrap: wrap; }
-.verdict { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--line); border-radius: 10px; padding: .5rem .9rem; min-width: 260px; }
+.verdict { background: var(--panel); border: 1px solid var(--line); border-left: 6px solid var(--line); border-radius: 10px; padding: .45rem .9rem; min-width: 260px; }
 .verdict.pass { border-left-color: var(--ok); } .verdict.fail { border-left-color: var(--bad); }
-.verdict .t { font-weight: 700; font-size: 1.05rem; }
-.verdict .l { font-size: .9rem; }
+.verdict .t { font-weight: 700; font-size: 1rem; }
+.verdict .l { font-size: .85rem; }
 
-main { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr); gap: 16px; align-items: start; }
-@media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
-section.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .8rem 1rem; min-width: 0; }
+main { display: grid; grid-template-columns: minmax(0, 2.2fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (max-width: 1300px) { main { grid-template-columns: 1fr; } }
+section.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: .7rem 1rem; min-width: 0; }
+.scroll-x { overflow-x: auto; }
 
 table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-col.c-agent { width: 8.5rem; } col.c-task { width: 34%; }
-th { text-align: left; font-size: .75rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); font-weight: 650; padding: 0 .5rem .4rem 0; border-bottom: 1px solid var(--line); }
-td { padding: .45rem .5rem .45rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+col.c-agent { width: 6.2rem; } col.c-status { width: 11rem; } col.c-task { width: 12rem; } col.c-spark { width: 10rem; }
+th { text-align: left; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 650; padding: 0 .5rem .4rem 0; border-bottom: 1px solid var(--line); vertical-align: bottom; }
+th .field { text-transform: none; letter-spacing: 0; }
+th .pol { display: block; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--faint); }
+td { padding: .4rem .5rem .4rem 0; border-bottom: 1px solid var(--line); vertical-align: top; }
 tr:last-child td { border-bottom: 0; }
-td.agent { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-td.alerts { overflow: hidden; }
-.last { font-size: .8rem; color: var(--muted); overflow-wrap: anywhere; }
+tr.pull_out td { background: var(--red-soft); }
+td.agent { font-weight: 750; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.last { font-size: .75rem; color: var(--muted); overflow-wrap: anywhere; }
+.truth { font-size: .72rem; color: var(--faint); font-style: italic; }
 tr.flash td { animation: flash 1.6s ease-out; }
-@keyframes flash { from { background: var(--warn-soft); } to { background: transparent; } }
+@keyframes flash { from { box-shadow: inset 0 0 0 9999px var(--warn-soft); } to { box-shadow: none; } }
 @media (prefers-reduced-motion: reduce) { tr.flash td, .feed li.new { animation: none; } }
 
-.field { display: inline-block; padding: .08rem .45rem; border-radius: 6px; font-weight: 700; border: 2px solid transparent; }
+.badge { display: inline-block; padding: .1rem .5rem; border-radius: 6px; font-weight: 850; letter-spacing: .03em; font-size: .9rem; }
+.badge.pull_out { background: var(--red); color: var(--red-fg); font-size: 1.05rem; }
+.badge.unknown { background: var(--warn-soft); color: var(--warn); border: 2px solid var(--warn); }
+.badge.expected { border: 2px dashed var(--near); color: var(--near); background: var(--near-soft); }
+.badge.rising { border: 2px solid var(--warn); color: var(--warn); }
+.badge.ok { color: var(--muted); font-weight: 600; padding-left: 0; }
+.st-d { font-size: .75rem; color: var(--muted); margin-top: .15rem; }
+tr.pull_out .st-d { color: var(--fg); }
+
+.spark svg { display: block; width: 100%; height: 42px; overflow: visible; }
+.spark .v { font-size: .72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spark.off_task .v, .spark.unknown .v { color: var(--fg); font-weight: 700; }
+
+.field { display: inline-block; padding: .05rem .4rem; border-radius: 6px; font-weight: 700; border: 2px solid transparent; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .field.designated { background: var(--red); color: var(--red-fg); }
 .field.near_miss { border: 2px dashed var(--near); color: var(--near); background: var(--near-soft); }
 .field.other { background: var(--chip); color: var(--fg); font-weight: 600; }
-.field.small { font-size: .85rem; }
+.field.small { font-size: .82rem; }
 .field.none { color: var(--muted); font-weight: 500; background: transparent; padding-left: 0; }
 
-.chips { display: flex; flex-wrap: nowrap; gap: 5px; overflow: hidden; mask-image: linear-gradient(to right, #000 92%, transparent); }
-.chip { font-size: .8rem; padding: .05rem .4rem; border-radius: 5px; border: 2px solid transparent; white-space: nowrap; font-weight: 650; }
-.chip.designated { background: var(--red); color: var(--red-fg); }
-.chip.near_miss { border: 2px dashed var(--near); color: var(--near); background: var(--near-soft); }
-.chip.other { background: var(--chip); }
-.chip.off { outline: 3px solid var(--warn); outline-offset: 1px; }
-.chip.altered { background: var(--bad); color: var(--red-fg); border: 2px solid var(--fg); font-weight: 900; letter-spacing: .03em; }
-
 .feed { list-style: none; margin: 0; padding: 0; }
-.feed li { border-bottom: 1px solid var(--line); padding: .5rem 0 .5rem .7rem; border-left: 6px solid transparent; }
+.feed li { border-bottom: 1px solid var(--line); padding: .45rem 0 .45rem .7rem; border-left: 6px solid transparent; }
 .feed li:last-child { border-bottom: 0; }
 .feed li.designated { border-left-color: var(--red); }
 .feed li.near_miss { border-left-color: var(--near); }
@@ -114,17 +156,15 @@ tr.flash td { animation: flash 1.6s ease-out; }
 .feed li.new { animation: fadein .5s ease-out; }
 @keyframes fadein { from { opacity: .2; } to { opacity: 1; } }
 .l1 { display: flex; flex-wrap: wrap; gap: .2rem .7rem; align-items: baseline; }
-.l1 .concept { font-size: 1.15rem; }
+.l1 .concept { font-size: 1.05rem; }
 .l1 .num { font-weight: 700; }
-.l2 { display: flex; flex-wrap: wrap; gap: .1rem .9rem; font-size: .85rem; color: var(--muted); margin-top: .15rem; }
+.l2 { display: flex; flex-wrap: wrap; gap: .1rem .8rem; font-size: .8rem; color: var(--muted); margin-top: .15rem; }
 .tag { font-weight: 750; }
 .tag.match { color: var(--ok); } .tag.off { color: var(--warn); } .tag.near { color: var(--near); } .tag.none { color: var(--muted); }
 .sig.ok { color: var(--ok); font-weight: 700; }
-.sig.bad { color: var(--bad); font-weight: 900; font-size: 1.1rem; text-transform: uppercase; }
-.problems { color: var(--bad); font-weight: 700; font-size: .9rem; margin-top: .2rem; }
+.sig.bad { color: var(--bad); font-weight: 900; font-size: 1.05rem; text-transform: uppercase; }
+.problems { color: var(--bad); font-weight: 700; font-size: .85rem; margin-top: .2rem; }
 .empty { color: var(--muted); padding: .8rem 0; }
-
-.legend { display: flex; gap: 1rem; flex-wrap: wrap; font-size: .8rem; color: var(--muted); align-items: center; margin-top: 10px; }
 .conn { font-size: .85rem; }
 </style>
 </head>
@@ -132,7 +172,7 @@ tr.flash td { animation: flash 1.6s ease-out; }
 <div class="wrap">
   <header>
     <h1>Belay</h1>
-    <div class="sub">live red-line alerts from a sealed detector</div>
+    <div class="sub">swarm monitor: sustained drift into danger areas, from a sealed detector's signed summaries</div>
     <div class="spacer"></div>
     <div class="conn" id="conn"><span class="dot warn"></span>connecting to dashboard</div>
     <button class="theme" id="theme" type="button" title="Theme (t)">theme: auto</button>
@@ -142,10 +182,23 @@ tr.flash td { animation: flash 1.6s ease-out; }
     <div class="card"><div class="k">Detector</div><div class="v" id="det-v">?</div><div class="d" id="det-d"></div></div>
     <div class="card"><div class="k">Identity</div><div class="v mono" id="id-v">?</div><div class="d" id="id-d"></div></div>
     <div class="card"><div class="k">Certificate</div><div class="v" id="cert-v">?</div><div class="d" id="cert-d"></div></div>
+    <div class="card"><div class="k">Belay policy</div><div class="v" id="pol-v">?</div><div class="d" id="pol-d"></div></div>
     <div class="card"><div class="k">Swarm log</div><div class="v" id="sw-v">?</div><div class="d" id="sw-d"></div></div>
   </div>
 
   <div class="altered-banner" id="altered"></div>
+
+  <div class="pullout" id="pullout"></div>
+
+  <section class="panel swarm">
+    <h2>Agents in alarm per danger area, over time</h2>
+    <div class="multiples" id="multiples"></div>
+    <div class="legend">
+      <span><span class="sw off"></span>off task: drifted into the area (pull out)</span>
+      <span><span class="sw unk"></span>task unknown (pull out)</span>
+      <span><span class="sw exp"></span>expected: assigned to a danger area</span>
+    </div>
+  </section>
 
   <div class="counts" id="counts"></div>
 
@@ -153,18 +206,19 @@ tr.flash td { animation: flash 1.6s ease-out; }
 
   <main>
     <section class="panel">
-      <h2>Agents</h2>
+      <h2>Agents: each reported concept's request mean over the episode</h2>
+      <div class="scroll-x">
       <table>
-        <colgroup><col class="c-agent"><col class="c-task"><col></colgroup>
-        <thead><tr><th>Agent</th><th>Current task field</th><th>Alerts, newest first</th></tr></thead>
+        <colgroup id="cols"></colgroup>
+        <thead><tr id="head"></tr></thead>
         <tbody id="agents"></tbody>
       </table>
+      </div>
       <div class="legend">
-        <span class="field designated">red line</span>
-        <span class="field near_miss">near miss</span>
-        <span class="field other">other field</span>
-        <span class="chip other off">off task</span>
-        <span class="chip altered">altered</span>
+        <span class="badge pull_out">PULL OUT</span><span>off task, in alarm</span>
+        <span class="badge expected">expected</span><span>in alarm in its assigned area</span>
+        <span class="badge rising">rising</span><span>some hot requests, not yet sustained</span>
+        <span>Sparklines: dashed line the swarm's normal; dots hot requests; ▲ alerts; dotted vertical the world's drift label (ground truth, not used by the alarm).</span>
       </div>
     </section>
     <section class="panel">
@@ -176,8 +230,9 @@ tr.flash td { animation: flash 1.6s ease-out; }
 
 <script>
 "use strict";
-const S = { detector: {}, swarm: {}, certifier: {}, agents: {}, alerts: [], counts: {}, connected: false };
-const MAX_ALERTS = 400, FEED_SHOW = 40, CHIPS = 10;
+const S = { detector: {}, swarm: {}, certifier: {}, agents: {}, alerts: [], counts: {}, connected: false,
+            policy: {}, alarm: {}, baseline: {}, timeline: [], designated: [], near_miss: [] };
+const MAX_ALERTS = 400, FEED_SHOW = 30;
 const flashed = new Set();
 const fresh = new Set();
 
@@ -192,8 +247,12 @@ function shortHash(h) {
 }
 function clock(t) {
   if (!t) return "";
-  const d = new Date(t * 1000);
-  return d.toLocaleTimeString([], { hour12: false });
+  return new Date(t * 1000).toLocaleTimeString([], { hour12: false });
+}
+function ago(t) {
+  if (!t) return "";
+  const s = Math.max(0, Date.now() / 1000 - t);
+  return s < 60 ? Math.round(s) + " s ago" : s < 3600 ? Math.floor(s / 60) + " min " + Math.round(s % 60) + " s ago" : (s / 3600).toFixed(1) + " h ago";
 }
 function ms(v) {
   if (v == null || isNaN(v)) return "?";
@@ -207,13 +266,17 @@ function median(xs) {
 }
 function natural(a, b) { return a.localeCompare(b, undefined, { numeric: true }); }
 function score(v) { return v == null ? "?" : Number(v).toFixed(3); }
+function num(v, d) { return v == null || isNaN(v) ? "?" : Number(v).toFixed(d == null ? 3 : d); }
+function concepts() { return Object.keys(S.policy || {}); }
+function cclass(c) { return S.designated.includes(c) ? "designated" : S.near_miss.includes(c) ? "near_miss" : "other"; }
+function step(r) { return r ? String(r).split(".").pop() : "?"; }
 
 function fieldBadge(task, extra) {
   extra = extra ? " " + extra : "";
   if (!task) return `<span class="field none${extra}">no task seen</span>`;
   const name = task.redline && task.redline !== "none" ? task.redline : (task.field || "not a red line");
   const cls = task.redline && task.redline !== "none" ? task.class : (task.field ? task.class : "none");
-  return `<span class="field ${esc(cls)}${extra}">${esc(name)}</span>`;
+  return `<span class="field ${esc(cls)}${extra}" title="${esc(name)}">${esc(name)}</span>`;
 }
 const MATCH = {
   match: ["match", "matches task"],
@@ -223,7 +286,7 @@ const MATCH = {
   no_task: ["none", "no task (canary or untracked)"],
 };
 
-// ---- rendering --------------------------------------------------------------------
+// ---- status cards ------------------------------------------------------------------
 
 function renderStatus() {
   const d = S.detector;
@@ -242,12 +305,17 @@ function renderStatus() {
   else if (id.certificate_id) {
     const expired = id.certified_until && new Date(id.certified_until) < new Date();
     $("cert-v").innerHTML = expired ? `<span class="bad">EXPIRED</span> ${esc(id.certificate_id)}` : `<span class="good">certified</span> ${esc(id.certificate_id)}`;
-    const covers = id.certified_concepts && id.certified_concepts.length ? "for " + id.certified_concepts.join(", ") + " · " : "";
-    $("cert-d").textContent = covers + (id.certified_until ? "until " + id.certified_until : "");
+    const covers = id.certified_concepts && id.certified_concepts.length ? "for " + id.certified_concepts.join(", ") : "for the whole profile";
+    $("cert-d").textContent = covers + (id.certified_until ? " · until " + id.certified_until : "");
   } else {
     $("cert-v").innerHTML = '<span class="warn">UNCERTIFIED</span>';
     $("cert-d").textContent = "no certificate installed on the detector";
   }
+
+  const al = S.alarm || {};
+  const modes = concepts().map(c => `${c}: ${S.policy[c].mode}`);
+  $("pol-v").textContent = concepts().length ? concepts().length + " danger areas" : "?";
+  $("pol-d").textContent = modes.join(" · ") + (al.window ? ` — sustained: last ${al.window} requests' mean ≥ ${al.threshold}, or ${al.min_hot} of ${al.window} ≥ ${al.rise} above the swarm's normal; spike: any alert` : "");
 
   const w = S.swarm;
   const wcls = w.status === "following" ? "ok" : w.status === "error" ? "bad" : w.status === "off" ? "" : "warn";
@@ -263,25 +331,131 @@ function renderStatus() {
   $("conn").innerHTML = S.connected ? '<span class="dot ok"></span>dashboard connected' : '<span class="dot bad"></span>dashboard server unreachable, retrying';
 }
 
+// ---- pull out ----------------------------------------------------------------------
+
+function renderPullOut() {
+  const agents = Object.values(S.agents).sort((a, b) => natural(a.agent, b.agent));
+  const pulled = agents.filter(a => a.status === "pull_out" && a.pull_out)
+    .sort((a, b) => (a.pull_out.since || 0) - (b.pull_out.since || 0));
+  const expected = agents.filter(a => a.status === "expected").length;
+  if (!pulled.length) {
+    $("pullout").innerHTML = `<div class="calm">No agent to pull out. <span>${agents.length} agents watched${expected ? `; ${expected} in a danger area by assignment (expected)` : ""}.</span></div>`;
+    return;
+  }
+  $("pullout").innerHTML = '<div class="pulls">' + pulled.map(a => {
+    const p = a.pull_out, t = a.task;
+    const where = p.off_task ? `off task: assigned ${esc(t && t.field || "?")}` : "task unknown";
+    const also = p.concepts && p.concepts.length > 1 ? ` (also ${p.concepts.filter(c => c !== p.concept).map(esc).join(", ")})` : "";
+    return `<div class="pull${p.off_task ? "" : " unknown"}">` +
+      `<div class="t"><span class="word">PULL OUT</span><span class="who">${esc(a.agent)}</span></div>` +
+      `<div class="what">${esc(p.concept)}${also} · ${where}</div>` +
+      `<div class="why">since ${clock(p.since)} (${ago(p.since)}), request ${esc(p.since_request)} · ${esc(p.why || "")}` +
+      (p.rolling != null && p.mode !== "spike" ? ` · window mean ${num(p.rolling)} vs normal ${num(p.baseline)}` : "") + `</div></div>`;
+  }).join("") + "</div>";
+}
+
+// ---- swarm view: small multiples, one per danger area ------------------------------------
+
+const KINDS = [["off_task", "var(--red)", "off task"], ["unknown", "var(--warn-mark)", "task unknown"], ["expected", "var(--near)", "expected"]];
+
+function renderSwarm() {
+  const cs = concepts(), tl = S.timeline || [];
+  const now = Date.now() / 1000;
+  const t0 = tl.length ? tl[0].t : now - 60;
+  const t1 = Math.max(now, t0 + 30);
+  let ymax = 1;
+  for (const p of tl) for (const c of cs) {
+    const k = (p.counts || {})[c] || {};
+    ymax = Math.max(ymax, (k.off_task || 0) + (k.unknown || 0) + (k.expected || 0));
+  }
+  const W = 400, H = 120, L = 22, B = 18, T = 6;
+  const x = t => L + (W - L - 4) * (t - t0) / (t1 - t0);
+  const y = v => H - B - (H - B - T) * v / ymax;
+  const html = cs.map(c => {
+    const last = tl.length ? (tl[tl.length - 1].counts || {})[c] || {} : {};
+    // Stacked step areas: off task at the bottom, then unknown, then expected.
+    const layers = KINDS.map(([kind, color], i) => {
+      let top = "", base = [];
+      const pts = tl.map(p => {
+        const k = (p.counts || {})[c] || {};
+        const lo = KINDS.slice(0, i).reduce((s, [kk]) => s + (k[kk] || 0), 0);
+        return [p.t, lo, lo + (k[kind] || 0)];
+      });
+      if (!pts.length) return "";
+      pts.push([t1, pts[pts.length - 1][1], pts[pts.length - 1][2]]);
+      let d = `M${x(pts[0][0])},${y(pts[0][2])}`;
+      for (let j = 1; j < pts.length; j++) d += `H${x(pts[j][0])}V${y(pts[j][2])}`;
+      for (let j = pts.length - 1; j >= 1; j--) d += `V${y(pts[j][1])}H${x(pts[j - 1][0])}`;
+      d += `V${y(pts[0][1])}Z`;
+      const fill = kind === "expected" ? "var(--near-soft)" : color;
+      const stroke = kind === "expected" ? ` stroke="${color}" stroke-width="1.5"` : "";
+      return `<path d="${d}" fill="${fill}"${stroke}/>`;
+    }).join("");
+    const grid = [];
+    for (let v = 0; v <= ymax; v += Math.max(1, Math.ceil(ymax / 4))) {
+      grid.push(`<line x1="${L}" x2="${W - 4}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)" stroke-width="1"/>` +
+        `<text x="${L - 5}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--faint)">${v}</text>`);
+    }
+    const span = t1 - t0;
+    const xl = `<text x="${L}" y="${H - 3}" font-size="11" fill="var(--faint)">${clock(t0)}</text>` +
+      `<text x="${W - 4}" y="${H - 3}" text-anchor="end" font-size="11" fill="var(--faint)">now (${Math.round(span / 60)} min)</text>`;
+    const nowTxt = `<strong>${last.off_task || 0}</strong> off task` + (last.unknown ? ` · <strong>${last.unknown}</strong> task unknown` : "") +
+      ` · <strong>${last.expected || 0}</strong> expected`;
+    return `<div class="mult" data-c="${esc(c)}"><div class="h"><span class="field ${cclass(c)} small">${esc(c)}</span>` +
+      `<span class="muted" style="font-size:.8rem">${esc(S.policy[c].mode)}</span><span class="now">${nowTxt}</span></div>` +
+      `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="agents in alarm on ${esc(c)} over time">${grid.join("")}${layers}${xl}` +
+      `<line class="cross" x1="0" x2="0" y1="${T}" y2="${H - B}" stroke="var(--faint)" stroke-width="1" visibility="hidden"/></svg>` +
+      `<div class="tip"></div></div>`;
+  }).join("");
+  $("multiples").innerHTML = html || '<div class="empty">No policy loaded.</div>';
+  for (const el of document.querySelectorAll(".mult")) {
+    const svg = el.querySelector("svg"), tip = el.querySelector(".tip"), cross = el.querySelector(".cross"), c = el.dataset.c;
+    svg.addEventListener("mousemove", ev => {
+      const r = svg.getBoundingClientRect();
+      const vx = (ev.clientX - r.left) / r.width * W;
+      const t = t0 + (vx - L) / (W - L - 4) * (t1 - t0);
+      let p = null;
+      for (const q of tl) if (q.t <= t) p = q;
+      if (!p) { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); return; }
+      const k = p.counts[c] || {};
+      cross.setAttribute("x1", vx); cross.setAttribute("x2", vx); cross.setAttribute("visibility", "visible");
+      tip.innerHTML = `${clock(t)} · ${k.off_task || 0} off task · ${k.unknown || 0} unknown · ${k.expected || 0} expected`;
+      tip.style.display = "block";
+      tip.style.left = Math.min(ev.clientX - r.left + 10, r.width - 260) + "px";
+      tip.style.top = "22px";
+    });
+    svg.addEventListener("mouseleave", () => { tip.style.display = "none"; cross.setAttribute("visibility", "hidden"); });
+  }
+}
+
+// ---- counts and verdicts ----------------------------------------------------------
+
 function renderCounts() {
   const c = S.counts || {};
   const recent = S.alerts.slice(-100);
   const sign = median(recent.map(a => a.latency_sign_ms));
   const arrive = median(recent.map(a => a.latency_arrival_ms));
+  const agents = Object.values(S.agents);
+  const nPull = agents.filter(a => a.status === "pull_out").length;
   const item = (n, label, cls) => `<div class="count"><b class="${cls || ""}">${n ?? 0}</b><span>${label}</span></div>`;
   $("counts").innerHTML =
+    item(nPull, "to pull out", nPull ? "bad" : "good") +
+    item(agents.filter(a => a.status === "expected").length, "expected") +
+    item(agents.filter(a => a.status === "rising").length, "rising", "warn") +
+    item(c.summaries, "request summaries") +
     item(c.alerts, "alerts") +
-    item(c.designated, "red-line", c.designated ? "bad" : "") +
+    item(c.designated, "red-line alerts") +
     item(c.near_miss, "near miss") +
-    item(c.match, "match task", "good") +
-    item(c.off_task, "off task", c.off_task ? "warn" : "") +
-    item(c.altered, "altered", c.altered ? "bad" : "") +
-    `<div class="count"><b>${ms(sign)}</b><span>token to signed (median)</span></div>` +
-    `<div class="count"><b>${ms(arrive)}</b><span>signed to dashboard (median)</span></div>`;
+    item(c.off_task, "alerts off task", c.off_task ? "warn" : "") +
+    item((c.altered || 0) + (c.altered_summaries || 0), "altered", (c.altered || c.altered_summaries) ? "bad" : "") +
+    `<div class="count"><b>${ms(sign)}</b><span>token to signed</span></div>` +
+    `<div class="count"><b>${ms(arrive)}</b><span>signed to dashboard</span></div>`;
   const banner = $("altered");
-  if (c.altered) {
+  const n = (c.altered || 0) + (c.altered_summaries || 0);
+  if (n) {
     banner.classList.add("on");
-    banner.textContent = `${c.altered} ALTERED ALERT RECORD${c.altered > 1 ? "S" : ""}: signature does not verify with the lab key`;
+    const what = [c.altered ? `${c.altered} alert record${c.altered > 1 ? "s" : ""}` : "", c.altered_summaries ? `${c.altered_summaries} summar${c.altered_summaries > 1 ? "ies" : "y"}` : ""].filter(Boolean).join(" and ");
+    banner.textContent = `ALTERED: ${what} do not verify with the lab key, and are not counted as evidence`;
   } else banner.classList.remove("on");
 }
 
@@ -322,57 +496,128 @@ function certifiedConcepts() {
   const c = S.detector && S.detector.identity && S.detector.identity.certified_concepts;
   return c && c.length ? new Set(c) : null;
 }
-
-function uncertified(a) {
-  const c = certifiedConcepts();
-  return c !== null && !c.has(a.concept);
+function uncertifiedConcept(c) {
+  const set = certifiedConcepts();
+  return set !== null && !set.has(c);
 }
 
-function chip(a) {
-  const off = a.match === "off_task" || a.match === "other_line";
-  const cls = a.verified ? a.class + (off ? " off" : "") : "altered";
-  const label = a.verified ? `${a.concept}${uncertified(a) ? " (uncertified)" : ""} ${score(a.score).replace(/^0/, "")}` : `ALTERED ${a.concept}`;
-  return `<span class="chip ${esc(cls)}" title="token ${esc(a.token_index)} · ${esc(a.request_id)}">${esc(label)}</span>`;
+// ---- agents -------------------------------------------------------------------------
+
+const STATUS = {
+  pull_out: "PULL OUT", expected: "expected", rising: "rising", ok: "ok",
+};
+const SPARK_COLOR = { off_task: "var(--red)", unknown: "var(--warn-mark)", expected: "var(--near)", rising: "var(--warn-mark)", ok: "var(--spark)" };
+
+function sparkline(a, c) {
+  const series = (a.series || {})[c] || [];
+  const sig = (a.signal || {})[c] || {};
+  const al = S.alarm || {};
+  const base = sig.baseline != null ? sig.baseline : (S.baseline || {})[c];
+  const W = 160, H = 42, P = 3;
+  if (!series.length) return `<div class="spark"><svg viewBox="0 0 ${W} ${H}"><line x1="0" x2="${W}" y1="${H - P}" y2="${H - P}" stroke="var(--grid)"/></svg><div class="v">no requests yet</div></div>`;
+  const hotLine = base != null ? base + (al.rise || 0) : null;
+  // One scale per concept across agents, so rows compare at a glance.
+  const ymax = SCALE[c] || Math.max(...series.map(p => p.m), 0.05);
+  const n = Math.max(series.length, 12);
+  const x = i => P + (W - 2 * P) * (series.length === 1 ? 1 : i / (n - 1)) + (W - 2 * P) * (n - series.length) / (n - 1);
+  const y = v => H - P - (H - 2 * P - 6) * Math.min(v, ymax) / ymax;
+  const color = SPARK_COLOR[sig.state] || "var(--spark)";
+  const parts = [];
+  if (al.threshold && al.threshold <= ymax) parts.push(`<line x1="0" x2="${W}" y1="${y(al.threshold)}" y2="${y(al.threshold)}" stroke="var(--red)" stroke-width="1" stroke-dasharray="1 3" opacity=".8"/>`);
+  if (base != null) parts.push(`<line x1="0" x2="${W}" y1="${y(base)}" y2="${y(base)}" stroke="var(--faint)" stroke-width="1" stroke-dasharray="4 3"/>`);
+  // The rolling window, shaded; its hot requests get dots.
+  const w = Math.min(al.window || 5, series.length);
+  const wx0 = x(series.length - w) - 3, wx1 = x(series.length - 1) + 3;
+  parts.push(`<rect x="${wx0}" y="0" width="${Math.max(0, wx1 - wx0)}" height="${H}" fill="var(--chip)" opacity=".8" rx="3"/>`);
+  // Alerts: thin ticks along the top.
+  const alerted = new Set(((a.alerted || {})[c] || []).map(h => h.r));
+  series.forEach((p, i) => {
+    if (alerted.has(p.r)) parts.push(`<rect x="${(x(i) - 0.75).toFixed(1)}" y="0" width="1.5" height="5" fill="var(--red)"><title>alert on ${esc(p.r)}</title></rect>`);
+  });
+  // Ground truth: where the world says drift began (never used by the alarm).
+  if (a.drift && a.drift.concept === c) {
+    const i = series.findIndex(p => p.r === a.drift.request_id);
+    if (i >= 0) parts.push(`<line x1="${x(i)}" x2="${x(i)}" y1="0" y2="${H}" stroke="var(--fg)" stroke-width="1.5" stroke-dasharray="2 2"><title>world label: nudged toward ${esc(c)} at request ${esc(a.drift.request_id)}</title></line>`);
+  }
+  parts.push(`<polyline points="${series.map((p, i) => `${x(i).toFixed(1)},${y(p.m).toFixed(1)}`).join(" ")}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`);
+  series.slice(-w).forEach((p, j) => {
+    const i = series.length - w + j;
+    if (hotLine != null && p.m >= hotLine) parts.push(`<circle cx="${x(i).toFixed(1)}" cy="${y(p.m).toFixed(1)}" r="2.4" fill="${color}"><title>${esc(p.r)}: mean ${num(p.m)}</title></circle>`);
+  });
+  const trend = sig.trend > 0.002 ? "↑" : sig.trend < -0.002 ? "↓" : "→";
+  const v = sig.rolling != null ? `${num(sig.rolling)} ${trend} · ${sig.hot ?? 0}/${sig.n ?? 0} hot` : "";
+  return `<div class="spark ${esc(sig.state || "ok")}" title="${esc(c)}: last ${w} requests mean ${num(sig.rolling)}; swarm normal ${num(base)}"><svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">${parts.join("")}</svg><div class="v">${v}</div></div>`;
 }
 
+function statusCell(a) {
+  const st = a.status || "ok";
+  if (st === "pull_out" && a.pull_out) {
+    const p = a.pull_out;
+    return `<span class="badge ${p.off_task ? "pull_out" : "unknown"}">PULL OUT</span>` +
+      `<div class="st-d"><b>${esc(p.concept)}</b> · ${p.off_task ? "off task" : "task unknown"}<br>since ${clock(p.since)} · req .${esc(step(p.since_request))}</div>`;
+  }
+  if (st === "expected") {
+    const cs = Object.entries(a.signal || {}).filter(([, s]) => s.state === "expected").map(([c]) => c);
+    return `<span class="badge expected">expected</span><div class="st-d">${esc(cs.join(", "))}: its assigned area</div>`;
+  }
+  if (st === "rising") {
+    const cs = Object.entries(a.signal || {}).filter(([, s]) => s.state === "rising").map(([c]) => c);
+    return `<span class="badge rising">rising</span><div class="st-d">${esc(cs.join(", "))}</div>`;
+  }
+  return `<span class="badge ok">ok</span>`;
+}
+
+let SCALE = {};
 function renderAgents() {
-  const byAgent = {};
-  for (const a of S.alerts) (byAgent[a.agent] = byAgent[a.agent] || []).push(a);
-  const names = new Set([...Object.keys(S.agents), ...Object.keys(byAgent)]);
-  const rows = [...names].sort(natural).map(name => {
-    const ag = S.agents[name] || {};
-    const alerts = (byAgent[name] || []).slice(-CHIPS).reverse();
-    const t = ag.task;
-    const sub = [t && t.task_id ? `<span class="mono">${esc(t.task_id)}</span>` : "", ag.last ? esc(ag.last) : ""].filter(Boolean).join(" \u00b7 ");
-    const taskId = sub ? `<div class="last">${sub}</div>` : "", last = "";
-    const flash = flashed.has(name) ? ' class="flash"' : "";
-    return `<tr${flash}><td class="agent">${esc(name)}</td><td class="task">${fieldBadge(t)}${taskId}${last}</td>` +
-      `<td class="alerts"><div class="chips">${alerts.map(chip).join("") || '<span class="muted">none</span>'}</div></td></tr>`;
+  const cs = concepts();
+  const al = S.alarm || {};
+  SCALE = {};
+  for (const c of cs) {
+    let m = 0.05;
+    for (const a of Object.values(S.agents)) for (const p of (a.series || {})[c] || []) m = Math.max(m, p.m);
+    const base = (S.baseline || {})[c];
+    if (base != null) m = Math.max(m, (base + (al.rise || 0)) * 1.5);
+    // Show the absolute threshold when it is near the data; otherwise it would flatten everything.
+    if (al.threshold && al.threshold <= m * 1.6) m = Math.max(m, al.threshold * 1.05);
+    SCALE[c] = m;
+  }
+  $("cols").innerHTML = '<col class="c-agent"><col class="c-status"><col class="c-task">' + cs.map(() => '<col class="c-spark">').join("");
+  $("head").innerHTML = "<th>Agent</th><th>Belay</th><th>Current task</th>" + cs.map(c =>
+    `<th><span class="field ${cclass(c)} small">${esc(c)}</span>${uncertifiedConcept(c) ? ' <span class="warn">uncertified</span>' : ""}<span class="pol">${esc(S.policy[c].mode)}</span></th>`).join("");
+  const names = Object.keys(S.agents).sort(natural);
+  const rows = names.map(name => {
+    const a = S.agents[name];
+    const t = a.task;
+    const sub = [t && t.task_id ? `<span class="mono">${esc(String(t.task_id).slice(0, 8))}</span>` : "", a.last ? esc(a.last) : ""].filter(Boolean).join(" · ");
+    const truth = a.drift ? `<div class="truth">world label: nudged toward ${esc(a.drift.concept)} at req .${esc(step(a.drift.request_id))}</div>` : "";
+    const cls = [a.status === "pull_out" ? "pull_out" : "", flashed.has(name) ? "flash" : ""].filter(Boolean).join(" ");
+    return `<tr class="${cls}"><td class="agent">${esc(name)}</td><td>${statusCell(a)}</td>` +
+      `<td>${fieldBadge(t, "small")}${sub ? `<div class="last">${sub}</div>` : ""}${truth}</td>` +
+      cs.map(c => `<td>${sparkline(a, c)}</td>`).join("") + "</tr>";
   });
   flashed.clear();
-  $("agents").innerHTML = rows.join("") || '<tr><td colspan="3" class="empty">No agents yet. Waiting for the swarm log or the first alert.</td></tr>';
+  $("agents").innerHTML = rows.join("") || `<tr><td colspan="${3 + cs.length}" class="empty">No agents yet. Waiting for the swarm log or the first summary.</td></tr>`;
 }
 
 function renderFeed() {
   const items = S.alerts.slice(-FEED_SHOW).reverse();
   $("feed").innerHTML = items.map(a => {
-    // The swarm writes the task label just before the request, and the log is
-    // tailed a moment later than the stream, so a fresh alert may wait briefly.
     const waiting = a.match === "no_task" && Date.now() / 1000 - a.arrival < 3;
     const [mcls, mword] = waiting ? ["none", "awaiting task label"] : (MATCH[a.match] || ["none", a.match]);
     const sig = a.verified ? '<span class="sig ok">signature valid</span>' : '<span class="sig bad">ALTERED: signature fails</span>';
     const cls = (a.verified ? a.class : "altered") + (fresh.has(a.id) ? " new" : "");
     const problems = a.problems && a.problems.length ? `<div class="problems">${a.problems.map(esc).join("; ")}</div>` : "";
+    const mode = S.policy[a.concept] ? S.policy[a.concept].mode : null;
     return `<li class="${esc(cls)}">` +
       `<div class="l1"><span class="field ${esc(a.class)} concept">${esc(a.concept)}</span>` +
-      (uncertified(a) ? ` <span class="muted">uncertified</span>` : "") +
+      (uncertifiedConcept(a.concept) ? ` <span class="muted">uncertified</span>` : "") +
       `<span>score <span class="num">${score(a.score)}</span></span>` +
-      `<span>token <span class="num">${esc(a.token_index)}</span></span>` +
-      `<span class="num">${esc(a.agent)}</span></div>` +
+      `<span class="num">${esc(a.agent)}</span>` +
+      (mode ? `<span class="muted">${mode === "spike" ? "spike: alarms" : "sustained: one alert is a passing thought"}</span>` : "") + `</div>` +
       `<div class="l2">${sig}<span>task: ${fieldBadge(a.task, "small")}</span>` +
       `<span class="tag ${mcls}">${esc(mword)}</span>` +
       `<span>token→signed ${ms(a.latency_sign_ms)}</span><span>signed→here ${ms(a.latency_arrival_ms)}</span>` +
-      `<span>arrived ${clock(a.arrival)}</span><span class="mono">${esc(a.request_id)}</span>` +
+      `<span>${clock(a.arrival)}</span><span class="mono">${esc(a.request_id)}</span>` +
       `${a.source === "log" ? "<span>from log</span>" : ""}</div>${problems}</li>`;
   }).join("") || '<li class="empty">No alerts yet.</li>';
   fresh.clear();
@@ -384,7 +629,7 @@ function render() {
   pending = true;
   requestAnimationFrame(() => {
     pending = false;
-    renderStatus(); renderCounts(); renderCerts(); renderAgents(); renderFeed();
+    renderStatus(); renderPullOut(); renderSwarm(); renderCounts(); renderCerts(); renderAgents(); renderFeed();
   });
 }
 
@@ -400,7 +645,7 @@ function connect() {
     S.alerts.push(alert);
     if (S.alerts.length > MAX_ALERTS) S.alerts.splice(0, S.alerts.length - MAX_ALERTS);
     S.counts = counts;
-    flashed.add(alert.agent); fresh.add(alert.id);
+    fresh.add(alert.id);
     render();
   });
   es.addEventListener("alert_update", e => {
@@ -410,7 +655,21 @@ function connect() {
     S.counts = counts;
     render();
   });
-  es.addEventListener("agent", e => { const a = JSON.parse(e.data); S.agents[a.agent] = a; render(); });
+  es.addEventListener("agent", e => {
+    const a = JSON.parse(e.data);
+    const prev = S.agents[a.agent];
+    if (prev && prev.status !== a.status && a.status === "pull_out") flashed.add(a.agent);
+    S.agents[a.agent] = a;
+    render();
+  });
+  es.addEventListener("timeline", e => {
+    const { point, baseline } = JSON.parse(e.data);
+    S.timeline.push(point);
+    if (S.timeline.length > 2000) S.timeline.splice(0, S.timeline.length - 2000);
+    S.baseline = baseline;
+    render();
+  });
+  es.addEventListener("summary_problem", e => { S.counts = JSON.parse(e.data).counts; render(); });
   es.addEventListener("detector", e => { S.detector = JSON.parse(e.data); render(); });
   es.addEventListener("swarm", e => { S.swarm = JSON.parse(e.data); render(); });
   es.addEventListener("certifier", e => { const c = JSON.parse(e.data); S.certifier[c.name] = c; render(); });
@@ -440,11 +699,15 @@ function applySnapshot(s) {
   S.alerts = s.alerts || [];
   S.agents = {}; for (const a of s.agents || []) S.agents[a.agent] = a;
   S.certifier = {}; for (const c of s.certifier || []) S.certifier[c.name] = c;
+  S.policy = s.policy || {}; S.alarm = s.alarm || {}; S.baseline = s.baseline || {};
+  S.timeline = s.timeline || []; S.designated = s.designated || []; S.near_miss = s.near_miss || [];
   S.connected = true;
   render();
 }
 
 render();
+// "since" and the swarm view's time axis move with the clock.
+setInterval(render, 2000);
 // ?once renders a single snapshot without streaming (for screenshots and printing).
 if (new URLSearchParams(location.search).has("once")) fetch("state").then(r => r.json()).then(applySnapshot);
 else connect();
