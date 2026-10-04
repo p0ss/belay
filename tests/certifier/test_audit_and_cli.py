@@ -29,17 +29,35 @@ def test_audit_log_clean_then_catches_edited_line(stub, capsys):
     client, log = stub()
     _fill(client)
     assert main(["audit-log", "--log", str(log)]) == 0
+    assert "3 alert records, 4 summary records, 7 verified" in capsys.readouterr().out
     lines = log.read_text().splitlines()
-    assert len(lines) == 3
-    ev = json.loads(lines[1])
+    kinds = [json.loads(l)["kind"] for l in lines]
+    assert kinds.count("alert") == 3 and kinds.count("summary") == 4
+    i = kinds.index("alert")
+    ev = json.loads(lines[i])
     ev["payload"]["alert"]["concept"] = "Astronomy"  # rewrite one alert after the fact
-    lines[1] = json.dumps(ev)
+    lines[i] = json.dumps(ev)
     lines.append("{not json")
     log.write_text("\n".join(lines) + "\n")
-    capsys.readouterr()
     assert main(["audit-log", "--log", str(log)]) == 1
     out = capsys.readouterr().out
-    assert "ALTERED line 2" in out and "ALTERED line " + str(len(lines)) in out
+    assert f"ALTERED line {i + 1} (alert)" in out and "ALTERED line " + str(len(lines)) in out
+
+
+def test_audit_log_catches_edited_summary(stub, capsys):
+    client, log = stub()
+    _fill(client)
+    lines = log.read_text().splitlines()
+    i = next(n for n, l in enumerate(lines)
+             if json.loads(l)["kind"] == "summary" and json.loads(l)["payload"]["request_id"] == "000000000000.0")
+    ev = json.loads(lines[i])
+    for s in ev["payload"]["summaries"]:
+        s["mean"] = 0.02  # play the request's sustained signal down after the fact
+    lines[i] = json.dumps(ev)
+    log.write_text("\n".join(lines) + "\n")
+    assert main(["audit-log", "--log", str(log)]) == 1
+    out = capsys.readouterr().out
+    assert f"ALTERED line {i + 1} (summary): signature does not verify (000000000000.0)" in out
 
 
 def test_audit_log_flags_duplicated_line(stub, capsys):

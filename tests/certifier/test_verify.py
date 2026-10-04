@@ -73,13 +73,29 @@ def test_altered_log_exposed_in_direct_mode(stub, suite, certificate):
     client, log, _ = deploy(stub, certificate)
     assert direct(client, suite, certificate, rounds=1, alerts_log=log)["passed"]
     lines = log.read_text().splitlines()
-    ev = json.loads(lines[0])
+    i = next(n for n, l in enumerate(lines) if json.loads(l)["kind"] == "alert")
+    ev = json.loads(lines[i])
     ev["payload"]["alert"]["score"] = 0.5
-    lines[0] = json.dumps(ev)
+    lines[i] = json.dumps(ev)
     log.write_text("\n".join(lines) + "\n")
     r = direct(client, suite, certificate, rounds=1, alerts_log=log)
     assert r["exposed"] and r["exposure"]["check"] == "log"
-    assert [a["line"] for a in r["alerts_log"]["altered"]] == [1]
+    assert [a["line"] for a in r["alerts_log"]["altered"]] == [i + 1]
+
+
+def test_altered_summary_exposed_in_direct_mode(stub, suite, certificate):
+    client, log, _ = deploy(stub, certificate)
+    assert direct(client, suite, certificate, rounds=1, alerts_log=log)["passed"]
+    lines = log.read_text().splitlines()
+    i = next(n for n, l in enumerate(lines) if json.loads(l)["kind"] == "summary")
+    ev = json.loads(lines[i])
+    ev["payload"]["summaries"][0]["mean"] = 0.0
+    lines[i] = json.dumps(ev)
+    log.write_text("\n".join(lines) + "\n")
+    r = direct(client, suite, certificate, rounds=1, alerts_log=log)
+    assert r["exposed"] and r["exposure"]["check"] == "log"
+    assert r["alerts_log"]["altered"] == [{"line": i + 1, "kind": "summary", "reason": "signature does not verify",
+                                           "request_id": ev["payload"]["request_id"]}]
 
 
 # Swarm mode: canaries mixed into live traffic by the swarm --------------------
@@ -144,14 +160,37 @@ def test_swarm_mode_exposes_altered_alert_log(stub, suite, certificate, tmp_path
     client, alerts, _ = deploy(stub, certificate)
     canaries = run_swarm(client, suite, tmp_path / "ep.jsonl")
     lines = alerts.read_text().splitlines()
-    ev = json.loads(lines[3])
+    i = [n for n, l in enumerate(lines) if json.loads(l)["kind"] == "alert"][3]
+    ev = json.loads(lines[i])
     ev["payload"]["alert"]["concept"] = "Astronomy"
-    lines[3] = json.dumps(ev)
+    lines[i] = json.dumps(ev)
     alerts.write_text("\n".join(lines) + "\n")
     r = verify_swarm(canaries, suite.criteria, episode_log=tmp_path / "ep.jsonl", alerts_log=alerts,
                      certificate=certificate)
     assert r["exposed"] and "log" in r["exposures_by_check"]
-    assert r["alerts_log"]["altered"][0]["line"] == 4
+    assert r["alerts_log"]["altered"][0]["line"] == i + 1
+
+
+@pytest.mark.parametrize("edit", ["alter", "delete"])
+def test_swarm_mode_exposes_altered_or_deleted_summary(stub, suite, certificate, tmp_path, edit):
+    client, alerts, _ = deploy(stub, certificate)
+    canaries = run_swarm(client, suite, tmp_path / "ep.jsonl")
+    lines = alerts.read_text().splitlines()
+    i = [n for n, l in enumerate(lines) if json.loads(l)["kind"] == "summary"][5]
+    if edit == "alter":
+        ev = json.loads(lines[i])
+        ev["payload"]["summaries"][0]["mean"] = 0.0
+        lines[i] = json.dumps(ev)
+    else:
+        del lines[i]
+    alerts.write_text("\n".join(lines) + "\n")
+    r = verify_swarm(canaries, suite.criteria, episode_log=tmp_path / "ep.jsonl", alerts_log=alerts,
+                     certificate=certificate)
+    assert r["exposed"] and r["exposure"]["check"] == "log"
+    if edit == "alter":
+        assert r["alerts_log"]["altered"][0]["kind"] == "summary"
+    else:
+        assert "summary in the signed response is missing from the log" in r["exposure"]["detail"]
 
 
 def test_swarm_mode_exposes_deleted_alert_record(stub, suite, certificate, tmp_path):

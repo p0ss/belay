@@ -15,7 +15,7 @@ from typing import Optional
 from belay.contract import key_from_env
 
 from .certify import run_certification
-from .checks import Baseline, audit_log
+from .checks import Baseline, audit_log, operating_points_from
 from .suite import load_canaries, load_suite
 from .traffic import make_client
 from .verify import load_certificate, verify_direct, verify_swarm
@@ -54,8 +54,20 @@ def cmd_certify(a) -> int:
     s = r["concept_score"]
     roles = ", ".join(f"{role} {v['passed']}/{v['total']}" for role, v in s["by_role"].items())
     print(f"certification {'PASSED' if r['passed'] else 'FAILED'} on {r['responses']}/{r['cases']} cases: "
-          f"{s['passed']}/{s['total']} concepts met their criteria ({s['share']:.0%}; {roles})")
-    for c, v in r["concepts"].items():
+          f"{s['passed']}/{s['total']} concepts met their criteria on the {r['basis']} basis "
+          f"({s['share']:.0%}; {roles})")
+    if r.get("sustained"):
+        print(f"sustained signal ({r['sustained']['statistic']}; certification basis):")
+        for c, v in r["sustained"]["concepts"].items():
+            def fmt(a, ci):
+                return "n/a" if a is None else f"{a:.3f} [{ci[0]:.3f}, {ci[1]:.3f}]"
+            op = v["operating_point"] or {}
+            print(f"  {c:20s} {v['role']:10s} AUROC {fmt(v['auroc'], v['auroc_ci95'])} (min {v['auroc_min']})  "
+                  f"hard {fmt(v['auroc_hard'], v['auroc_hard_ci95'])} (min {v['auroc_hard_min']})  "
+                  f"operating point {op.get('threshold')}  "
+                  f"{'ok' if v['passed'] else 'FAIL ' + '; '.join(v['reasons'])}")
+        print("token-level alerts (reported for comparison):")
+    for c, v in r["token_level"]["concepts"].items():
         rec = "n/a" if v["recall"] is None else f"{v['recall']:.3f}"
         fpr = "n/a" if v["fpr"] is None else f"{v['fpr']:.3f}"
         print(f"  {c:20s} {v['role']:10s} recall {rec} ({v['hits']}/{v['positives']}, min {v['recall_min']})  "
@@ -78,7 +90,12 @@ def _print_verify(r: dict, path: Path) -> None:
     cr, fa = r["canary_recall"], r["canary_false_alarms"]
     print(f"verification ({r['mode']}): {r['requests']} requests, {r['canaries']} canaries, "
           f"{r['decoys']} decoys in {r['seconds']}s")
-    print(f"  canary recall {cr['hits']}/{cr['positives']}; false alarms {fa['false_alarms']}/{fa['negatives']}")
+    print(f"  canaries scored by {r['basis']}: recall {cr['hits']}/{cr['positives']}; "
+          f"false alarms {fa['false_alarms']}/{fa['negatives']}")
+    sep = r.get("canary_separation") or {}
+    if sep.get("tested"):
+        print(f"  separation: AUROC {sep['auroc']} vs floor {sep['floor']} on {sep['positives']} positives, "
+              f"{sep['negatives']} negatives (p {sep['p']:.2g})")
     if e:
         print(f"EXPOSED by {e['check']} after {e['requests']} requests and {e['seconds']}s: {e['detail']}")
         for k, v in r["exposures_by_check"].items():
@@ -99,8 +116,9 @@ def _baseline_from(path: str) -> Baseline:
     """
     results = json.loads(Path(path).read_text())
     ident = results["identity"]
+    ops, statistic = operating_points_from(results)
     return Baseline(ident["model_hash"], ident["pack"], ident["profile_hash"],
-                    concepts=results.get("certified_concepts") or None)
+                    concepts=results.get("certified_concepts") or None, operating_points=ops, statistic=statistic)
 
 
 def cmd_verify(a) -> int:
@@ -130,10 +148,11 @@ def cmd_verify(a) -> int:
 def cmd_audit(a) -> int:
     audit = audit_log(Path(a.log), key_from_env())
     d = audit.as_dict()
-    print(f"{d['path']}: {d['alert_records']} alert records, {d['verified']} verified, "
-          f"{len(d['altered'])} altered, {len(d['duplicates'])} duplicated")
+    print(f"{d['path']}: {d['alert_records']} alert records, {d['summary_records']} summary records, "
+          f"{d['verified']} verified, {len(d['altered'])} altered, {len(d['duplicates'])} duplicated")
     for x in d["altered"]:
-        print(f"  ALTERED line {x['line']}: {x['reason']}" + (f" ({x['request_id']})" if x.get("request_id") else ""))
+        print(f"  ALTERED line {x['line']}" + (f" ({x['kind']})" if x.get("kind") else "") + f": {x['reason']}"
+              + (f" ({x['request_id']})" if x.get("request_id") else ""))
     for x in d["duplicates"]:
         print(f"  duplicate line {x['line']} repeats line {x['first_line']}")
     if a.out:

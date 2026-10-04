@@ -27,9 +27,16 @@ import httpx
 from belay.contract import AlertRecord, Certificate, GenerateResponse, key_from_env, verify
 from belay.contract.signing import CERTIFIER_KEY_ENV
 
-from .checks import Baseline, LogAudit, Problem, audit_log, binom_cdf, binom_sf, check_response, cross_check_log
+from .checks import (
+    SIGNED_KINDS, Baseline, LogAudit, Problem, audit_log, binom_cdf, binom_sf, check_record, check_response,
+    cross_check_log,
+)
 from .suite import Canary, Criteria, builtin_decoys
+from .sustained import separation_test, statistic_of, task_scores
 from .traffic import Traffic
+
+# Canary positives and negatives needed before the Mann-Whitney check runs.
+SEPARATION_MIN_EACH = 5
 
 
 def task_of(request_id: str) -> str:
@@ -80,6 +87,9 @@ class Monitor:
     misses: List[dict] = field(default_factory=list)
     false_alarms: List[dict] = field(default_factory=list)
     responses: List[GenerateResponse] = field(default_factory=list)
+    # Summary statistic per concept, canary positives and negatives, for the Mann-Whitney check.
+    sep_pos: Dict[str, List[float]] = field(default_factory=dict)
+    sep_neg: Dict[str, List[float]] = field(default_factory=dict)
     _now: str = field(default_factory=now_iso)
 
     def _expose(self, problem: Problem) -> None:
@@ -117,12 +127,28 @@ class Monitor:
         self.responses.append(resp)
         return None if any(p.check in ("signature", "coverage") for p in probs) else resp
 
-    def alert_record(self, record: AlertRecord) -> None:
+    def alert_record(self, record) -> None:
+        """A signed alert or summary record: it must be signed for the certified model."""
         if self.baseline is not None and record.model_hash != self.baseline.model_hash:
-            self._expose(Problem("identity", f"alert record signed for model {record.model_hash}, "
+            kind = "alert" if isinstance(record, AlertRecord) else "summary"
+            self._expose(Problem("identity", f"{kind} record signed for model {record.model_hash}, "
                                  f"certified {self.baseline.model_hash}", record.request_id))
 
-    def canary(self, canary: Canary, alerted: Set[str], request_id: Optional[str] = None) -> None:
+    @property
+    def basis(self) -> str:
+        """sustained: canaries scored by summaries against the certified operating points; alerts otherwise."""
+        return "sustained" if self.baseline is not None and self.baseline.operating_points else "alerts"
+
+    def _hit(self, concept: str, alerted: Set[str], scores: Optional[Dict[str, float]]) -> bool:
+        if self.basis == "alerts":
+            return concept in alerted
+        op = self.baseline.operating_points.get(concept)
+        s = (scores or {}).get(concept)
+        return op is not None and s is not None and s > op
+
+    def canary(self, canary: Canary, alerted: Set[str], request_id: Optional[str] = None,
+               scores: Optional[Dict[str, float]] = None) -> None:
+        """Score one canary or decoy. `scores` is its summary statistic per concept (None: no summaries)."""
         crit = self.criteria
         if canary.decoy:
             self.decoys += 1
@@ -138,20 +164,30 @@ class Monitor:
             expected = [c for c in expected if c in certified]
         if expected:
             self.pos_n += 1
-            if any(c in alerted for c in expected):
+            if any(self._hit(c, alerted, scores) for c in expected):
                 self.pos_hits += 1
             else:
-                self.misses.append({"task_id": canary.task_id, "field": canary.field, "request_id": request_id})
+                self.misses.append({"task_id": canary.task_id, "field": canary.field, "request_id": request_id,
+                                    "scores": {c: (scores or {}).get(c) for c in expected}})
         skip = crit.not_negative_for(expected, canary.allowed) | set(expected)
         eligible = [c for c in crit.false_alarm_concepts() if c not in skip
                     and (certified is None or c in certified)]
         if eligible:
             self.neg_n += 1
-            fired = sorted(c for c in eligible if c in alerted)
+            fired = sorted(c for c in eligible if self._hit(c, alerted, scores))
             if fired:
                 self.neg_false += 1
                 self.false_alarms.append({"task_id": canary.task_id, "field": canary.field, "alerted": fired,
                                           "request_id": request_id})
+        # Threshold-free: canary positives' scores against negatives', per concept.
+        if scores is not None:
+            for c in expected:
+                if c in scores:
+                    self.sep_pos.setdefault(c, []).append(scores[c])
+            for c in crit.concepts:
+                if c not in skip and c in scores and (certified is None or c in certified):
+                    self.sep_neg.setdefault(c, []).append(scores[c])
+        self._separation(request_id)
         c = crit.canaries
         p_low = binom_cdf(self.pos_hits, self.pos_n, c.recall_min) if self.pos_n else 1.0
         if p_low < c.alpha:
@@ -163,6 +199,31 @@ class Monitor:
                                  f"alerted on a designated concept; P(this many | FPR {c.fpr_max}) = {p_high:.2g} < {c.alpha}",
                                  request_id))
 
+    def separation(self) -> dict:
+        su = self.criteria.sustained
+        groups = {c: {"pos": self.sep_pos.get(c, []), "neg": self.sep_neg.get(c, []),
+                      "floor": su.concepts[c].auroc_min}
+                  for c in set(self.sep_pos) | set(self.sep_neg) if su and c in su.concepts}
+        out = separation_test(groups, self.criteria.canaries.alpha, min_each=SEPARATION_MIN_EACH)
+        out["run"] = su is not None
+        return out
+
+    def _separation(self, request_id: Optional[str]) -> None:
+        if self.criteria.sustained is None or not self.sep_pos:
+            return
+        s = self.separation()
+        if s["exposed"]:
+            self._expose(Problem("canary_separation", f"canary positives' {self.statistic} no longer above "
+                                 f"negatives': AUROC {s['auroc']} on {s['positives']} positives and "
+                                 f"{s['negatives']} negatives, P(this low | AUROC {s['floor']}) = {s['p']:.2g} "
+                                 f"< {s['alpha']}", request_id))
+
+    @property
+    def statistic(self) -> str:
+        if self.baseline is not None and self.baseline.operating_points:
+            return self.baseline.statistic
+        return self.criteria.sustained.statistic if self.criteria.sustained else "mean"
+
     def summary(self) -> dict:
         c = self.criteria.canaries
         first = self.first_exposure
@@ -170,6 +231,9 @@ class Monitor:
         return {
             "requests": self.requests, "seconds": round(self.t_last - (self.t0 or self.t_last), 3),
             "canaries": self.canaries, "decoys": self.decoys,
+            "basis": self.basis, "statistic": self.statistic if self.basis == "sustained" else None,
+            "operating_points": self.baseline.operating_points if self.basis == "sustained" else None,
+            "canary_separation": self.separation(),
             "canary_recall": {"hits": self.pos_hits, "positives": self.pos_n,
                               "rate": self.pos_hits / self.pos_n if self.pos_n else None, "recall_min": c.recall_min},
             "canary_false_alarms": {"false_alarms": self.neg_false, "negatives": self.neg_n,
@@ -197,6 +261,8 @@ def _audit_into(monitor: Monitor, audit: LogAudit, request_index: Dict[str, int]
         if e is None or n < e.requests:
             monitor.exposures["log"] = Exposure("log", p.detail, n, monitor.t_last - (monitor.t0 or monitor.t_last), rid)
     for _, record in audit.records:
+        monitor.alert_record(record)
+    for _, record in audit.summaries:
         monitor.alert_record(record)
 
 
@@ -235,8 +301,10 @@ def verify_direct(client: httpx.Client, canaries: List[Canary], criteria: Criter
         request_index[req["request_id"]] = monitor.requests
         resp = monitor.response(s.raw, req, s.error)
         alerted = {a.concept for a in resp.alerts} if resp else set()
+        # An untrusted response has no signal: its canary scores as nothing detected.
+        scores = statistic_of(resp.summaries, monitor.statistic) if resp else {}
         if resp is not None or s.raw is None:
-            monitor.canary(item, alerted, req["request_id"])
+            monitor.canary(item, alerted, req["request_id"], scores if (resp is None or resp.summaries) else None)
         if stop_on_expose and monitor.exposures:
             break
 
@@ -256,7 +324,7 @@ def verify_direct(client: httpx.Client, canaries: List[Canary], criteria: Criter
 
 
 def _episode_requests(path: Path) -> tuple:
-    """Requests and any alert records found in the swarm's episode log."""
+    """Requests and any signed (kind, record) pairs, alerts or summaries, found in the swarm's episode log."""
     requests, records = [], []
     with Path(path).open(encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -269,8 +337,8 @@ def _episode_requests(path: Path) -> tuple:
             p = ev.get("payload") or {}
             if not isinstance(p, dict):
                 continue
-            if ev.get("kind") == "alert":
-                records.append(p)
+            if ev.get("kind") in SIGNED_KINDS:
+                records.append((ev["kind"], p))
                 continue
             resp = p.get("response") if isinstance(p.get("response"), dict) else None
             rid = p.get("request_id") or (resp or {}).get("request_id")
@@ -293,20 +361,23 @@ def verify_swarm(canaries: List[Canary], criteria: Criteria, *, episode_log: Pat
     timeline, inline_records = _episode_requests(episode_log)
     by_task = {c.task_id: c for c in canaries}
 
-    # Signed alert records, joined to tasks by the request id prefix.
+    # Signed alert and summary records, joined to tasks by the request id prefix.
     log = audit_log(alerts_log, lab_key) if alerts_log is not None else None
     task_alerts: Dict[str, Set[str]] = {}
     records = [r for _, r in log.records] if log else []
-    for p in inline_records:
-        try:
-            rec = AlertRecord.model_validate(p)
-        except Exception:
-            monitor.problems.append(Problem("log", "malformed alert record in the episode log", p.get("request_id")))
+    # One signed summary list per request, whichever source carried it first.
+    request_summaries: Dict[str, list] = {r.request_id: r.summaries for _, r in log.summaries} if log else {}
+    for kind, p in inline_records:
+        record, reason = check_record(kind, p, lab_key)
+        if reason is not None:
+            monitor.problems.append(Problem("log", f"{kind} record in the episode log: {reason}",
+                                            p.get("request_id") if isinstance(p, dict) else None))
             continue
-        if verify(p, lab_key):
-            records.append(rec)
+        monitor.alert_record(record)
+        if kind == "alert":
+            records.append(record)
         else:
-            monitor.problems.append(Problem("log", "alert record in the episode log does not verify", rec.request_id))
+            request_summaries.setdefault(record.request_id, record.summaries)
     for rec in records:
         task_alerts.setdefault(task_of(rec.request_id), set()).add(rec.alert.concept)
 
@@ -314,6 +385,7 @@ def verify_swarm(canaries: List[Canary], criteria: Criteria, *, episode_log: Pat
     for i, r in enumerate(timeline):
         last_step[task_of(r["request_id"])] = i
     request_index: Dict[str, int] = {}
+    task_requests: Dict[str, List[str]] = {}
     seen: Set[str] = set()
     for i, r in enumerate(timeline):
         monitor.tick(r["t"])
@@ -322,9 +394,16 @@ def verify_swarm(canaries: List[Canary], criteria: Criteria, *, episode_log: Pat
         trusted = monitor.response(r["response"]) if r["response"] else None
         if trusted is not None:
             task_alerts.setdefault(task, set()).update(a.concept for a in trusted.alerts)
+            if trusted.summaries:
+                request_summaries.setdefault(trusted.request_id, trusted.summaries)
+        task_requests.setdefault(task, []).append(r["request_id"])
         if task in by_task and last_step[task] == i:
             seen.add(task)
-            monitor.canary(by_task[task], task_alerts.get(task, set()), r["request_id"])
+            found = [request_summaries[rid] for rid in task_requests[task] if rid in request_summaries]
+            # With operating points, a canary without any signed summary scores as nothing detected.
+            scores = task_scores(found, monitor.statistic) if found else (
+                {} if monitor.basis == "sustained" else None)
+            monitor.canary(by_task[task], task_alerts.get(task, set()), r["request_id"], scores)
 
     if log is not None:
         _audit_into(monitor, log, request_index)

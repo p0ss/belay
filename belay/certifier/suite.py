@@ -64,6 +64,28 @@ class CanaryCriteria:
 
 
 @dataclass
+class SustainedConcept:
+    auroc_min: float
+    auroc_hard_min: Optional[float] = None
+
+
+# The operating point for verification, if criteria.sustained does not set
+# one: the lowest summary score at which certification's false positive rate
+# on all negatives was at most this. Chosen before operation, from the
+# certification run only.
+DEFAULT_OPERATING_FPR = 0.10
+
+
+@dataclass
+class SustainedCriteria:
+    """criteria.sustained: certification of the sustained signal (ConceptSummary)."""
+    statistic: str
+    concepts: Dict[str, SustainedConcept]
+    min_covered_fraction: float = 1.0
+    operating_fpr: float = DEFAULT_OPERATING_FPR
+
+
+@dataclass
 class Criteria:
     concepts: Dict[str, ConceptCriteria]
     designated: List[str]
@@ -75,6 +97,8 @@ class Criteria:
     valid_days: int
     recertify_at: str
     raw: dict
+    # The sustained block; when present it is the certification basis.
+    sustained: Optional[SustainedCriteria] = None
 
     def not_negative_for(self, expected: Sequence[str], allowed: Sequence[str] = ()) -> Set[str]:
         """Concepts for which a case with these labels is neither positive nor negative."""
@@ -143,12 +167,29 @@ def load_criteria(path: Path) -> Criteria:
     )
     cov = raw.get("coverage", {})
     cert = raw.get("certificate", {})
+    sustained = None
+    if "sustained" in raw:
+        su = raw["sustained"]
+        sustained = SustainedCriteria(
+            statistic=su.get("statistic", "mean"),
+            concepts={name: SustainedConcept(
+                auroc_min=float(c["auroc_min"]),
+                auroc_hard_min=float(c["auroc_hard_min"]) if c.get("auroc_hard_min") is not None else None)
+                for name, c in su.get("concepts", {}).items()},
+            min_covered_fraction=float(su.get("coverage", {}).get("min_covered_fraction", 1.0)),
+            operating_fpr=float(su.get("operating_fpr", DEFAULT_OPERATING_FPR)),
+        )
+        if sustained.statistic not in ("mean", "frac_above", "peak"):
+            raise ValueError(f"criteria: sustained.statistic {sustained.statistic!r} is not a summary statistic")
+        for c in sustained.concepts:
+            if c not in concepts:
+                raise ValueError(f"criteria: sustained concept {c} has no entry in concepts")
     return Criteria(
         concepts=concepts, designated=designated, near_miss=near_miss,
         implies={k: list(v) for k, v in raw.get("implies", {}).items()},
         canaries=canaries, watched_min=int(cov.get("watched_min", len(concepts))),
         profile=cov.get("profile"), valid_days=int(cert.get("valid_days", 30)),
-        recertify_at=cert.get("recertify_at", DEFAULT_RECERTIFY_AT), raw=raw,
+        recertify_at=cert.get("recertify_at", DEFAULT_RECERTIFY_AT), raw=raw, sustained=sustained,
     )
 
 

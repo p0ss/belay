@@ -7,12 +7,16 @@ from belay.certifier.verify import verify_direct
 
 
 class BlindToConstitutionalLaw(StubBackend):
-    """A detector whose ConstitutionalLaw lens never fires: that concept fails, the rest pass."""
+    """A detector whose ConstitutionalLaw lens never fires: that concept fails, the rest pass.
+
+    Its summaries still cover every token, with the concept cold throughout."""
 
     def generate(self, request, emit=None):
         kept = []
         result = super().generate(request, emit=kept.append)
         result.alerts = [a for a in kept if a.concept != "ConstitutionalLaw"]
+        result.summaries = [s.model_copy(update={"mean": 0.02, "frac_above": 0.0, "peak": 0.02, "peak_token": None})
+                            if s.concept == "ConstitutionalLaw" else s for s in result.summaries]
         return result
 
 
