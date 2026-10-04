@@ -24,8 +24,9 @@ Belay makes two claims:
 
 The probes themselves are not the result. We use benign university fields as
 stand-in red lines and inherit their accuracy from the lens pack. One of them,
-ConstitutionalLaw, failed certification; at this stage of development we read
-that as a probe that needs retraining.
+ConstitutionalLaw, failed certification, and the red lines fire too often on
+neighbouring fields. We read both as probe design issues: at this stage of
+development the response is to fix the probe and certify again.
 
 ## Setup
 
@@ -181,25 +182,7 @@ code today:
   the batched bank is rebuilt when the loaded set changes.
 
 Lenses of the same shape can be batched: stack their weights and run each
-layer as one batched matrix multiply. Belay's first lab side did this for the
-reported band lenses, and its scores matched HAT's to within bf16 rounding.
-
-### What batching gains (earlier lab side, for scale)
-
-On that earlier lab side, scoring a fixed set of lenses in one batched pass
-on every token, over the same model with no lenses:
-
-| Lenses scored every token | 1 session | 4 | 8 | 16 |
-|---|---|---|---|---|
-| 3 (reported subset) | +4.5% | +5.1% | +4.9% | +3.7% |
-| 178 (whole university pack) | +9.0% | +8.8% | +9.0% | +12.0% |
-| 3,721 (First Light, no hierarchy) | +10.5% | +13.6% | +21.0% | +25.9% |
-
-These are not HAT's numbers. The 3,721 row scores every lens on every token,
-which HAT never does, so it is an upper bound on compute, not a measure of
-the hierarchy. It shows that the arithmetic of thousands of probes is cheap
-on one GPU once it is batched. The code is kept on the branch
-`detector-fused-archive`.
+layer as one batched matrix multiply, with the same outputs.
 
 ### Pending
 
