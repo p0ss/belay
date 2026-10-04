@@ -25,7 +25,10 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 
 from .events import EventLog
-from .models import Alert, AlertRecord, Certificate, Coverage, GenerateRequest, GenerateResponse, Identity
+from .models import (
+    Alert, AlertRecord, Certificate, ConceptSummary, Coverage, GenerateRequest, GenerateResponse, Identity,
+    SummaryRecord,
+)
 from .signing import credential, key_from_env, sign
 
 
@@ -46,6 +49,8 @@ class BackendResult:
     watched: int
     resident_peak: int
     overhead_ms: float
+    # One per reported concept (belay.contract.models.ConceptSummary).
+    summaries: List["ConceptSummary"] = field(default_factory=list)
 
 
 Emit = Callable[[RawAlert], None]
@@ -123,6 +128,7 @@ def create_app(backend: Backend, log_path: Path, key: Optional[bytes] = None) ->
     @app.post("/generate", response_model=GenerateResponse)
     def generate(req: GenerateRequest) -> GenerateResponse:
         log = log_for(req.episode or "detector")
+        t_start = time.time()
         alerts: List[Alert] = []
 
         def emit(raw: RawAlert) -> None:
@@ -152,8 +158,19 @@ def create_app(backend: Backend, log_path: Path, key: Optional[bytes] = None) ->
                               pack=backend.pack, profile=backend.profile,
                               watch=getattr(backend, "watch", None)),
             overhead_ms=result.overhead_ms, identity=identity(req.agent),
+            summaries=result.summaries,
         )
         response.signature = sign(response, key)
+        if result.summaries:
+            record = SummaryRecord(
+                request_id=req.request_id, session_id=req.session_id, agent=req.agent,
+                summaries=result.summaries, tokens=result.tokens, t_start=t_start, t_end=time.time(),
+                model_hash=backend.model_hash,
+            )
+            record.signature = sign(record, key)
+            payload = record.model_dump(mode="json")
+            log.write(req.agent, "summary", payload, t=record.t_end)
+            stream.publish({"kind": "summary", **payload})
         return response
 
     @app.get("/alerts")

@@ -36,6 +36,40 @@ class Alert(BaseModel):
     t_signed: float
 
 
+class ConceptSummary(BaseModel):
+    """
+    How one reported concept behaved over a request: the sustained signal.
+
+    A token is covered when HAT scored the concept, or scored one of its
+    ancestors (the hierarchy checked that region and found it cold). Covered
+    tokens where the concept itself was not scored count as 0 in `mean`.
+    """
+    concept: str
+    covered_tokens: int = Field(ge=0)
+    scored_tokens: int = Field(ge=0)
+    mean: float = Field(ge=0.0, le=1.0)
+    # Share of covered tokens at or above the concept's threshold.
+    frac_above: float = Field(ge=0.0, le=1.0)
+    peak: float = Field(ge=0.0, le=1.0)
+    peak_token: Optional[int] = None
+
+
+class ConceptPolicy(BaseModel):
+    """
+    How sensitive the belay is for one concept, chosen per risk class.
+
+    The detector reports the same things for both modes: a signed alert at a
+    concept's first crossing of `threshold` in a request, and a summary of
+    every request. The mode tells the third party what to alarm on:
+    sustained: the concept's signal staying up across requests, per agent
+        (e.g. a rising mean or frac_above); a lone alert is a passing thought.
+    spike: a single alert, for highly specific concepts where one stray
+        crossing is worth pulling the agent out.
+    """
+    mode: Literal["sustained", "spike"] = "sustained"
+    threshold: float = Field(default=0.99, ge=0.0, le=1.0)
+
+
 class Coverage(BaseModel):
     # Watched concepts that were resident and scored for this request.
     watched: int
@@ -69,6 +103,8 @@ class GenerateResponse(BaseModel):
     coverage: Coverage
     overhead_ms: float
     identity: Identity
+    # One per reported concept, every request: the sustained signal.
+    summaries: List[ConceptSummary] = Field(default_factory=list)
     # HMAC-SHA256 by the lab key over the canonical encoding of every other
     # field (see belay.contract.signing).
     signature: str = ""
@@ -92,6 +128,20 @@ class Certificate(BaseModel):
     concepts: List[str] = Field(default_factory=list)
     uncertified: List[str] = Field(default_factory=list)
     # HMAC-SHA256 by the certifier key.
+    signature: str = ""
+
+
+class SummaryRecord(BaseModel):
+    """One request's signed summaries, as the detector writes them to the log and the stream."""
+    request_id: str
+    session_id: str
+    agent: str
+    summaries: List[ConceptSummary]
+    tokens: int
+    t_start: float
+    t_end: float
+    model_hash: str
+    # HMAC-SHA256 by the lab key over the canonical encoding of every other field.
     signature: str = ""
 
 

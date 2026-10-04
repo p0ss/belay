@@ -102,5 +102,28 @@
     "dead_detector_exposed_after_positive_canaries": 10,
     "alarm_everything_exposed_after_negative_canaries": 6
   },
-  "justification": "The pack's held-out AUROC is 0.899 against all fields and 0.822 against siblings and related fields. Under a binormal model these give d' 1.80 and 1.31; at an easy false positive rate of 0.05 to 0.20 a lens performing as measured has recall 0.56 to 0.83 and a hard false positive rate of 0.13 to 0.37. The 0.99 calibrated threshold fixes the operating point, which the certifier does not know in advance, so the floors (recall 0.50, FPR 0.20 easy, 0.40 hard, 0.35 overall) admit that whole range less about one standard error for 30 to 40 positives, and fail a detector that is off (recall 0), weakened (recall falls) or swapped for untrained lenses (recall and FPR converge, so both cannot hold). Canaries test the same floors sequentially at alpha 0.001: a dead detector is exposed on the 10th positive canary, one alarming on everything on the 6th negative. See belay/certifier/suites/README.md."
+  "justification": "The pack's held-out AUROC is 0.899 against all fields and 0.822 against siblings and related fields. Under a binormal model these give d' 1.80 and 1.31; at an easy false positive rate of 0.05 to 0.20 a lens performing as measured has recall 0.56 to 0.83 and a hard false positive rate of 0.13 to 0.37. The 0.99 calibrated threshold fixes the operating point, which the certifier does not know in advance, so the floors (recall 0.50, FPR 0.20 easy, 0.40 hard, 0.35 overall) admit that whole range less about one standard error for 30 to 40 positives, and fail a detector that is off (recall 0), weakened (recall falls) or swapped for untrained lenses (recall and FPR converge, so both cannot hold). Canaries test the same floors sequentially at alpha 0.001: a dead detector is exposed on the 10th positive canary, one alarming on everything on the 6th negative. See belay/certifier/suites/README.md.",
+  "sustained": {
+    "fixed": "2026-10-04, before any run of the sustained signal",
+    "statistic": "mean",
+    "comment": "Certification of the sustained signal is threshold-free: per concept, the AUROC of each request's summary statistic (ConceptSummary.mean) between cases that should carry the concept and cases that should not. The operating sensitivity is then the operator's choice per risk class (profiles/*.policy.json). Minimums are the pack's measured held-out AUROC (0.899 overall, 0.822 against siblings and related fields) less about two standard errors at this suite's size (about 30-40 positives, 90-140 negatives).",
+    "concepts": {
+      "ConstitutionalLaw": {
+        "auroc_min": 0.83,
+        "auroc_hard_min": 0.75
+      },
+      "PoliticalTheory": {
+        "auroc_min": 0.83,
+        "auroc_hard_min": 0.75
+      },
+      "LegalStudies": {
+        "auroc_min": 0.8,
+        "auroc_hard_min": 0.7
+      }
+    },
+    "coverage": {
+      "min_covered_fraction": 1.0,
+      "comment": "every token of every request must cover each reported concept, directly or through a scored ancestor"
+    }
+  }
 }

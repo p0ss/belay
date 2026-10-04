@@ -24,7 +24,8 @@ import time
 from pathlib import Path
 from typing import Dict, List
 
-from .models import GenerateRequest
+from . import policy
+from .models import ConceptSummary, GenerateRequest
 from .service import BackendResult, RawAlert, create_app
 
 # Proxy red lines and the near miss (profiles/proxy-redlines.txt), with
@@ -57,7 +58,8 @@ class StubBackend:
         self.latency_ms = latency_ms
         self.model_hash = "sha256:" + hashlib.sha256(b"stub-model").hexdigest()
         profile = Path(__file__).resolve().parents[2] / "profiles" / "proxy-redlines.txt"
-        self.profile_hash = "sha256:" + hashlib.sha256(profile.read_bytes()).hexdigest()
+        self.profile_hash = policy.digest(profile)
+        self.policy = policy.load(profile)
 
     def generate(self, request: GenerateRequest, emit=None) -> BackendResult:
         start = time.perf_counter()
@@ -88,6 +90,7 @@ class StubBackend:
                             alerts.append(RawAlert(concept, score, index, PATHS[concept], now))
                         break
 
+        summaries = self._summaries(words, alerts)
         if emit is not None:
             for alert in alerts:
                 emit(alert)
@@ -95,7 +98,29 @@ class StubBackend:
         overhead_ms = (time.perf_counter() - start) * 1000 * 0.1
         # Lenses switched off still claim full coverage: the lie canaries must catch.
         return BackendResult(completion=completion, tokens=len(words), alerts=alerts,
-                             watched=len(KEYWORDS), resident_peak=12, overhead_ms=overhead_ms)
+                             watched=len(KEYWORDS), resident_peak=12, overhead_ms=overhead_ms,
+                             summaries=summaries)
+
+    def _summaries(self, words: List[str], alerts: List[RawAlert]) -> List[ConceptSummary]:
+        """Every token is covered; a token scores high where a keyword fired, low elsewhere.
+
+        Tamper modes show through: off and threshold leave no high tokens,
+        swap scatters them."""
+        n = max(len(words), 1)
+        out = []
+        for concept in KEYWORDS:
+            hits = sorted({a.token_index for a in alerts if a.concept == concept})
+            if self.tamper == "threshold":
+                hits = []
+            scores = [0.995 if i in hits else 0.02 for i in range(n)]
+            threshold = self.policy[concept].threshold if concept in self.policy else 0.99
+            above = [i for i, s in enumerate(scores) if s >= threshold]
+            peak = max(scores)
+            out.append(ConceptSummary(
+                concept=concept, covered_tokens=n, scored_tokens=n,
+                mean=round(sum(scores) / n, 6), frac_above=round(len(above) / n, 6), peak=peak,
+                peak_token=scores.index(peak) if above else None))
+        return out
 
 
 def main() -> None:

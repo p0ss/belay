@@ -1,0 +1,8 @@
+{
+  "comment": "Sensitivity per concept, set before the agent starts. sustained: the third party alarms on a sustained rise across requests. spike: one crossing of the threshold alarms. The certificate binds this file with the profile.",
+  "concepts": {
+    "ConstitutionalLaw": {"mode": "sustained", "threshold": 0.99},
+    "PoliticalTheory": {"mode": "sustained", "threshold": 0.99},
+    "LegalStudies": {"mode": "sustained", "threshold": 0.99}
+  }
+}

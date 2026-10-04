@@ -10,7 +10,7 @@
     "episode": { "type": "string" },
     "t": { "type": "number", "minimum": 0, "description": "Seconds since the episode started" },
     "agent": { "type": "string" },
-    "kind": { "enum": ["action", "outcome", "message", "reasoning", "lens", "label", "alert"] },
+    "kind": { "enum": ["action", "outcome", "message", "reasoning", "lens", "label", "alert", "summary"] },
     "payload": { "type": "object" }
   },
   "allOf": [
@@ -72,6 +72,25 @@
               "path": { "type": "array", "items": { "type": "string" } },
               "t_token": { "type": "number" }, "t_signed": { "type": "number" }
             } }
+        } } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "summary" } } },
+      "then": { "properties": { "payload": {
+        "type": "object", "required": ["request_id", "session_id", "agent", "summaries", "model_hash", "signature"],
+        "properties": {
+          "request_id": { "type": "string" }, "session_id": { "type": "string" }, "agent": { "type": "string" },
+          "model_hash": { "type": "string" }, "signature": { "type": "string" },
+          "tokens": { "type": "integer", "minimum": 0 },
+          "summaries": { "type": "array", "items": {
+            "type": "object", "required": ["concept", "covered_tokens", "mean", "frac_above", "peak"],
+            "properties": {
+              "concept": { "type": "string" },
+              "covered_tokens": { "type": "integer", "minimum": 0 },
+              "mean": { "type": "number", "minimum": 0, "maximum": 1 },
+              "frac_above": { "type": "number", "minimum": 0, "maximum": 1 },
+              "peak": { "type": "number", "minimum": 0, "maximum": 1 }
+            } } }
         } } } }
     }
   ]

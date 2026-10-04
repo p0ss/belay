@@ -4,7 +4,7 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from belay.contract import AlertRecord, Certificate, GenerateResponse, key_from_env, sign, verify
+from belay.contract import AlertRecord, Certificate, GenerateResponse, SummaryRecord, key_from_env, sign, verify
 from belay.contract.events import EventLog, read, validate
 from belay.contract.service import create_app
 from belay.contract.stub import StubBackend
@@ -39,9 +39,18 @@ def test_generate_signed_and_alerts_on_designated_field(client):
     assert resp.coverage.watched == 3
 
     events = list(read(tmp / "alerts.jsonl"))
-    assert len(events) == 1 and events[0]["kind"] == "alert"
+    assert [e["kind"] for e in events] == ["alert", "summary"]
     record = AlertRecord.model_validate(events[0]["payload"])
     assert verify(record, key_from_env())
+    summary = SummaryRecord.model_validate(events[1]["payload"])
+    assert verify(summary, key_from_env())
+
+    # Every reported concept is summarised; the sustained signal follows the alert.
+    by = {s.concept: s for s in resp.summaries}
+    assert set(by) == {"ConstitutionalLaw", "PoliticalTheory", "LegalStudies"}
+    assert by["ConstitutionalLaw"].frac_above > 0 and by["ConstitutionalLaw"].peak >= 0.99
+    assert by["PoliticalTheory"].frac_above == 0 and by["PoliticalTheory"].covered_tokens == resp.tokens
+    assert summary.summaries == resp.summaries
 
 
 def test_no_alert_on_distant_field(client):
@@ -107,3 +116,15 @@ def test_emitted_alerts_signed_before_generation_ends(tmp_path):
     assert resp["alerts"][0]["t_signed"] <= backend.emitted_at
     assert resp["coverage"]["watch"] == "proxy"
     assert len(list(read(tmp_path / "a.jsonl"))) == 1
+
+
+def test_policy_digest_covers_the_policy(tmp_path):
+    from belay.contract import policy
+
+    profile = tmp_path / "p.txt"
+    profile.write_text("# red lines\nA\nB\n")
+    before = policy.digest(profile)
+    assert {c: p.mode for c, p in policy.load(profile).items()} == {"A": "sustained", "B": "sustained"}
+    policy.policy_path(profile).write_text('{"concepts": {"B": {"mode": "spike", "threshold": 0.9}}}')
+    assert policy.digest(profile) != before
+    assert policy.load(profile)["B"].mode == "spike" and policy.load(profile)["B"].threshold == 0.9
