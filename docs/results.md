@@ -1,11 +1,11 @@
 # Results
 
-Draft, 4 October 2026. Sections say what is measured and what is still to
-run.
+Draft, 5 October 2026.
 
 ## Summary
 
-Belay makes two claims:
+Belay makes two claims, and tests the case they are for: a swarm of agents
+pulled by its context toward a controlled area.
 
 1. **A wide range of probes can run with low overhead.** HAT, with its lens
    scoring now batched, adds about 5 ms per token (19%) for a 178-concept
@@ -13,21 +13,32 @@ Belay makes two claims:
    stream within a millisecond. Breadth beyond that pack is still to be
    shown on a calibrated pack.
 2. **A third party can certify once, then monitor a reported subset without
-   the weights.** Shown on the real detector. The lab runs the whole pack;
-   only three reported concepts cross the boundary, signed. A certifier
-   holding no weights, lenses or activations certified the detector per
-   concept, issued a partial certificate (2 of 3 concepts), monitored a
-   16-agent swarm under it, and exposed a detector with its lenses switched
-   off or swapped for untrained ones.
+   the weights.** The lab runs the whole pack; only the reported concepts
+   cross the boundary, signed. A certifier holding no weights, lenses or
+   activations certified the detector per concept (all three danger areas:
+   cyber, violence and biology, AUROC 0.92 to 0.94), monitored a swarm under
+   the certificate, and exposed a detector with its lenses switched off or
+   swapped for untrained ones.
+3. **Pulled by context, seen from outside.** In a 2×2 test (task × scenario,
+   four agents per group), agents doing unrelated work in a world whose peers
+   and notices led toward disease mechanisms or political violence were
+   separated from the control in two independent rounds (agent-level AUROC
+   0.94 to 1.00), and an alarm fixed from the control alone caught 14 of 16 of
+   them, with 2 false alarms among 16 controls. On benign proxy topics under
+   stronger pressure, 9 of 12. Gemma never refused; under the lure its replies
+   went quiet (bare actions with no reasoning) while the probe still carried
+   the concept the context pushed.
+   Cyber did not move: the agents' own world of terminals and access already
+   saturates that lens.
 
 What we watch for is not the instant of a bad thought but a sustained rise in
 the probability that agents are working in a predefined danger area, out of
 many concepts the lab can run at once. Each concept's belay is set before
 deployment, with a sensitivity chosen for its class of risk.
 
-The probes themselves are not the result: we use benign university fields as
-stand-in danger areas and inherit their accuracy from the lens pack. Where a
-concept fails certification we read it as probe design to fix.
+The probes themselves are not the result: we use university-field lenses as
+stand-ins and inherit their accuracy from the lens pack. Where a concept fails
+certification we read it as probe design to fix.
 
 ## Setup
 
