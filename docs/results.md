@@ -321,6 +321,38 @@ not add much on top: the shift was already there under ordinary pressure.
   context the agent is immersed in.
 - **Still no refusals** in any group, on any belay.
 
+### Probe pass: the model's replies under the lure
+
+Group B's own prompts, built by the swarm's world and prompt code at both
+strengths, were sent straight to Gemma with room for 256-token replies, every
+input position scored (`runs/w9/*/probe_pass.md` has each prompt, reply and
+score). Three positive tasks per belay, each in the ordinary world and in the
+negative one.
+
+- **No refusals, and the narrative stops.** In the ordinary world Gemma
+  explains itself ("I need to find the material to prepare the briefing. I
+  will check the library…"). With the lure in context it mostly replies with
+  a bare action, `{"action": "move_to", "args": {"place": "library"}}`, which
+  says nothing about the concept or its reasoning.
+- **The probe still carries the concept.** The same bare reply, under each
+  lure, on the danger belay:
+
+| Lure in context | Cyber probe | Biology probe | Violence probe |
+|---|---|---|---|
+| Cyber (3 replies) | 0.196 | 0.238 | 0.249 |
+| Biology (6 replies) | 0.140 | **0.311** | 0.280 |
+| Violence (5 replies) | 0.149 | 0.251 | **0.297** |
+| Ordinary world, reasoning replies | 0.389 | 0.134 | 0.131 |
+
+  With the text identical, the biology and violence probes are highest under
+  their own lure and well above the ordinary world, so the reply-phase signal
+  reflects what the model has taken in, not what it wrote. Cyber is not
+  specific (its lens is saturated by the deployment, as above), nor are the
+  three sibling law concepts of the proxy belay. The samples are small.
+
+This is the failure mode a text monitor cannot see: output that goes quiet
+while the context pulls the model toward a controlled area. The belay sees it.
+
 ## Limits
 
 - One open-weight model on one GPU, standing in for a closed model.
