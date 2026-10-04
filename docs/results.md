@@ -10,8 +10,9 @@ pulled by its context toward a controlled area.
 1. **A wide range of probes can run with low overhead.** HAT, with its lens
    scoring now batched, adds about 5 ms per token (19%) for a 178-concept
    hierarchical pack on Gemma 4 E4B-it, with every alert reaching the signed
-   stream within a millisecond. Breadth beyond that pack is still to be
-   shown on a calibrated pack.
+   stream within a millisecond. On a calibrated 7,947-concept pack HAT keeps
+   37 lenses resident and spends 12 ms per token at the median: 45 times the
+   breadth for about 2.3 times the cost, though not yet minimal.
 2. **A third party can certify once, then monitor a reported subset without
    the weights.** The lab runs the whole pack; only the reported concepts
    cross the boundary, signed. A certifier holding no weights, lenses or
@@ -170,10 +171,23 @@ per token, before and after): Gemma 3 4B with an 8,000-lens pack, 29.0 to
 11.2 ms; Gemma 4 E4B with an 8,000-lens pack, 97.7 to 28.3 ms; Gemma 4
 E4B-it with the university pack, 34.3 to 5.3 ms.
 
-**Still to run:** breadth on a calibrated pack of thousands of concepts. The
-only 8,000-concept pack for Gemma 4 E4B is uncalibrated and was trained on the
-base model; on the instruction-tuned model nearly every parent fires and its
-detections are not meaningful, so it is not a fair measure of the hierarchy.
+**Breadth.** HAT's own benchmark (`demo/bench_monitor.py`, greedy, 96 tokens
+per prompt) on its README setup, a calibrated 7,947-concept pack, beside the
+university pack:
+
+| Model and pack | Concepts | Lenses resident | Monitoring per token, median (mean) | Whole token, median |
+|---|---|---|---|---|
+| Gemma 4 E4B-it, university pack | 178 | 22 | 5.5 ms (6.6) | 31.6 ms |
+| Gemma 3 4B, First Light v2 | 7,947 | 37 | 12.4 ms (22.0) | 31.7 ms |
+
+A pack 45 times broader costs about 2.3 times as much monitoring at the
+median, with a few dozen lenses in memory either way: the hierarchy keeps
+breadth cheap in memory and sublinear in time. At 8,000 concepts it is not
+yet minimal: the median is about two thirds of generation time, and the mean
+is higher because loading new branches from disk adds a tail (up to 535 ms).
+The two runs use different models, so the comparison is indicative. The
+Gemma 4 First Light pack is not used here: it is uncalibrated and trained on
+the base model, and on the instruction-tuned model nearly every parent fires.
 
 ## Swarm monitoring: the 2×2 test
 
