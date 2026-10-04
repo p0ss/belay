@@ -2,6 +2,7 @@
 
     python -m belay.certifier.suites.build --seed 20261003
     python -m belay.certifier.suites.build --seed 20261003 --extract-from ../HatCatDev
+    python -m belay.certifier.suites.build --profile danger --seed 20261003  # danger/, build_danger.py
 
 The build reads only `data/heldout.jsonl` (the university pack's held-out
 Departments, extracted once from HatCatDev by `extract.py`), so the suites can
@@ -364,18 +365,30 @@ def build(seed: int, out_dir: Path = HERE, source: Path = SOURCE) -> dict:
 def main(argv=None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
-    parser.add_argument("--out", type=Path, default=HERE, help="Output directory (default: this package)")
+    parser.add_argument("--profile", choices=("proxy-redlines", "danger"), default="proxy-redlines",
+                        help="Which suite to build: the proxy red lines (this directory) or the danger "
+                             "areas (danger/, see build_danger.py)")
+    parser.add_argument("--out", type=Path, default=None,
+                        help="Output directory (default: this package, or danger/ for --profile danger)")
     parser.add_argument("--extract-from", type=Path, default=None,
                         help="HatCatDev checkout to re-extract the held-out texts from (read-only)")
     args = parser.parse_args(argv)
+    if args.profile == "danger":
+        from belay.certifier.suites import build_danger as gen
+        source, out = gen.SOURCE, args.out or gen.OUT
+    else:
+        gen, source, out = None, SOURCE, args.out or HERE
     if args.extract_from:
         from belay.certifier.suites.extract import extract, write_source, keep_for_suites
-        rows = keep_for_suites(extract(args.extract_from), SIBLINGS + RELATED, DISTANT_FIELDS, PARENT_FIELD)
-        write_source(rows, SOURCE)
-        print(f"Extracted {len(rows)} held-out texts to {SOURCE}")
-    manifest = build(args.seed, args.out)
+        rows = extract(args.extract_from)
+        if gen is None:
+            rows = keep_for_suites(rows, SIBLINGS + RELATED, DISTANT_FIELDS, PARENT_FIELD)
+        else:
+            rows = gen.keep_for_danger(rows)
+        write_source(rows, source)
+        print(f"Extracted {len(rows)} held-out texts to {source}")
+    manifest = build(args.seed, out) if gen is None else gen.build(args.seed, out)
     print(json.dumps({k: manifest[k] for k in ("seed", "certification", "canaries")}, indent=2))
-
 
 if __name__ == "__main__":
     main()

@@ -1,0 +1,86 @@
+{
+  "seed": 20261003,
+  "profile": "danger",
+  "source": {
+    "file": "../data/heldout-danger.jsonl",
+    "sha256": "bcde0d4390e47cf12dee9965bad0a4dda72b46d49b460a346817945d23e30abe"
+  },
+  "certification": {
+    "n": 282,
+    "by_kind": {
+      "easy_negative": 45,
+      "hard_negative": 94,
+      "positive": 143
+    },
+    "positives": {
+      "InformationSecurityCryptanalysis": 78,
+      "PoliticalViolenceResearch": 32,
+      "PathophysiologyDiseaseMechanisms": 33
+    },
+    "hard_negatives_by_field": {
+      "AlgorithmicBiasSocialImpact": 2,
+      "BioBasedMaterialsBiomimicry": 1,
+      "BiofeedbackPhysiologicalRegulation": 1,
+      "BiomechanicsPhysicalPerformance": 1,
+      "CellularBiologyPhysiology": 3,
+      "ClinicalAssessmentDiagnosticMedicine": 3,
+      "CognitiveBiasAndViolence": 2,
+      "ComputationalCognitiveScience": 2,
+      "ConflictResolution": 1,
+      "CriminalJusticeAndPunishment": 4,
+      "CulturalAnthropologyOfViolence": 2,
+      "CyberConflictAndInformationWarfare": 2,
+      "DataRepresentationInterpretation": 2,
+      "DeEscalationAndCrisisIntervention": 2,
+      "DigitalGovernance": 2,
+      "DigitalHeritageDataInterpretation": 2,
+      "EnvironmentalPhysiologyAdaptation": 1,
+      "EthicalImplicationsOfInformation": 2,
+      "FinancialRegulationPolicy": 2,
+      "FormalSystemsReasoning": 2,
+      "GeneticsHeredity": 3,
+      "GerontologyAgingResearch": 1,
+      "GraphicDesignVisualSemiotics": 2,
+      "HistoricalPatternsOfConflict": 2,
+      "ImmunologyDiseaseResistance": 3,
+      "IntergroupRelationsConflict": 1,
+      "InternationalRelations": 1,
+      "InternationalSecurityStudies": 4,
+      "LinguisticAnalysisSemantics": 2,
+      "MediaTheoryProduction": 2,
+      "MicrobiomeHostMicrobeInteractions": 3,
+      "NegotiationAndMediation": 2,
+      "NetworkTheoryCommunicationSystems": 2,
+      "NeuropsychologyOfEmotion": 1,
+      "NeuroscienceCognitiveHealth": 1,
+      "NutritionalScienceMetabolicRegulation": 1,
+      "PharmacologyTherapeuticInterventions": 3,
+      "PoliticalTheory": 1,
+      "PsychologicalProfilingOfViolence": 2,
+      "PublicAdministration": 2,
+      "ReactiveAggressionStudies": 2,
+      "SafetyInterventionStrategies": 2,
+      "SemioticsCulturalCodes": 2,
+      "SocialMovementStudies": 1,
+      "SocialMovementsCollectiveAction": 1,
+      "StorytellingWorldbuilding": 2,
+      "StrategicConflictAnalysis": 2,
+      "StrategicRiskAnalysisForecasting": 2,
+      "VictimologyAndTraumaStudies": 2
+    }
+  },
+  "canaries": {
+    "n": 53,
+    "positive": 27,
+    "by_field": {
+      "InformationSecurityCryptanalysis": 10,
+      "PathophysiologyDiseaseMechanisms": 9,
+      "PoliticalViolenceResearch": 8
+    }
+  },
+  "sha256": {
+    "certification.jsonl": "2c70426a024e867316caa29ca13c2b409aaf45c032d6bffe538b01c52d6c9e8c",
+    "canaries.jsonl": "42fde02604d952b6caddcb12b9b53d62bde873655a6682028d9afc4fcdb72dad",
+    "criteria.json": "0ae189958950f6914148fef6fc5b25b1f3afc1ea4f811f3e50c2071544660599"
+  }
+}

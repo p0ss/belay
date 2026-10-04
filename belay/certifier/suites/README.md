@@ -24,6 +24,14 @@ The same seed gives byte-identical files; `tests/certifier/test_suites.py`
 checks that the committed files reproduce from the seed in `manifest.json`, and
 that `data/heldout.jsonl` reproduces from HatCatDev when it is present.
 
+## Danger-area suite
+
+`danger/` holds a second suite, for `profiles/danger.txt` (cyber, violence and
+biology), built by the same generator with `--profile danger`
+(`build_danger.py`, source `data/heldout-danger.jsonl`). Its ground truth,
+including the content definition of the cyber red line, is in
+`danger/README.md`. The rest of this file is about the proxy suite.
+
 ## Proxy red lines
 
 From `profiles/proxy-redlines.txt`, checked against the pack
