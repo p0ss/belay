@@ -196,6 +196,9 @@ class Hub:
         self.clock = clock
         self.policy: Dict[str, ConceptPolicy] = dict(policy) if policy is not None else load_policy()
         self.alarm = alarm or Alarm()
+        # Per-concept sustained thresholds fixed by the certifier at certification
+        # (the request-mean operating point); they override Alarm.threshold.
+        self.operating: Dict[str, float] = {}
         # Every verified request mean per concept, sorted: the swarm's normal is the median.
         self.means: Dict[str, List[float]] = {c: [] for c in self.policy}
         self.summaries_seen: Dict[Tuple[str, str], None] = {}
@@ -393,6 +396,9 @@ class Hub:
         out = {"mode": pol.mode, "rolling": rolling, "baseline": base, "hot": hot, "n": len(window),
                "trend": trend, "state": "ok", "since": None, "since_request": None, "why": None}
         evidence: List[Optional[str]] = []
+        threshold = self.operating.get(concept, cfg.threshold)
+        source = "certified operating point" if concept in self.operating else "threshold"
+        out["threshold"] = threshold
         if pol.mode == "spike":
             hits = a["alerted"][concept]
             if hits:
@@ -400,8 +406,8 @@ class Hub:
                 evidence = [hits[-1]["r"]]
                 out["since"], out["since_request"] = hits[0]["t"], hits[0]["r"]
         elif len(window) >= cfg.window:
-            if rolling is not None and rolling >= cfg.threshold:
-                out["why"] = f"mean of last {cfg.window} requests {rolling:.3f} \u2265 {cfg.threshold:g}"
+            if rolling is not None and rolling >= threshold:
+                out["why"] = f"mean of last {cfg.window} requests {rolling:.3f} \u2265 {source} {threshold:.3g}"
             elif hot >= cfg.min_hot:
                 out["why"] = f"{hot} of last {cfg.window} requests \u2265 {cfg.rise:g} above the swarm's normal"
             if out["why"]:
@@ -573,6 +579,12 @@ class Hub:
     # ---- certifier ------------------------------------------------------------------
 
     def set_certifier(self, name: str, data: Any, mtime: float = 0.0) -> List[Update]:
+        if isinstance(data, dict):
+            ops = data.get("operating_points") or (data.get("results") or {}).get("operating_points") or {}
+            for concept, op in ops.items():
+                threshold = op.get("threshold") if isinstance(op, dict) else op
+                if isinstance(threshold, (int, float)):
+                    self.operating[concept] = float(threshold)
         summary = summarise_certifier(name, data)
         summary["mtime"] = mtime
         self.certifier[name] = summary

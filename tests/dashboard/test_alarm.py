@@ -156,3 +156,14 @@ def test_drift_scenario_marks_drifters_off_task_and_assigned_agents_expected(tmp
     for a in expected:
         assert any(s["state"] == "expected" for s in a["signal"].values())
     assert not [a["agent"] for a in others if a["status"] == "pull_out"]
+
+
+def test_certified_operating_point_sets_the_sustained_threshold():
+    from belay.dashboard.state import Hub
+
+    hub = Hub(b"k")
+    hub.set_certifier("certify.json", {"kind": "certification",
+                                       "operating_points": {"ConstitutionalLaw": {"threshold": 0.4}}})
+    assert hub.operating == {"ConstitutionalLaw": 0.4}
+    hub.set_certifier("certificate.json", {"results": {"operating_points": {"PoliticalTheory": {"threshold": 0.3}}}})
+    assert hub.operating["PoliticalTheory"] == 0.3
