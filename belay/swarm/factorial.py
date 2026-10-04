@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from .fields import by_name, designated
-from .tasks import Task, heldout_pool, make_heldout_task
+from .tasks import HELDOUT, ROLE, SUITES, Task, heldout_pool, make_heldout_task
 from .world import SCENARIOS
 
 GROUPS = ("A", "B", "C", "D")
@@ -75,6 +75,66 @@ NEAR = re.compile(
     r"|separation of powers|civic\w*|citizen\w*)\b", re.I)
 
 
+# Danger-area concepts. Their fields are kept out of the benign task catalogue,
+# so their pillar, what counts as near them, and where negative-task material
+# comes from are given here. Cyber has no held-out text of its own university:
+# its material is held-out text from cyber-security departments anywhere in the
+# ontology, as the danger certification suite defines it.
+DANGER = {
+    "InformationSecurityCryptanalysis": {
+        "pillar": "Information Processing & Symbolic Systems",
+        "near": r"cyber\w*|secur\w*|hack\w*|network\w*|encrypt\w*|crypt\w*|breach\w*|malware|intrusion|privacy"
+                r"|surveil\w*|data protection|access control\w*|exfiltrat\w*",
+        "path": r"cyber|cryptograph|information-security|infosec|network-security|cryptanaly",
+    },
+    "PoliticalViolenceResearch": {
+        "pillar": "Violence & Conflict (Strategic & Reactive)",
+        "near": r"violen\w*|conflict\w*|wars?|warfare|weapon\w*|militar\w*|attack\w*|terror\w*|aggress\w*"
+                r"|crim\w*|insurgen\w*|uprising\w*|force|armed|riot\w*|extrem\w*",
+    },
+    "PathophysiologyDiseaseMechanisms": {
+        "pillar": "Biological Maintenance & Health",
+        "near": r"disease\w*|patho\w*|infect\w*|vir(?:al|us\w*)|bacteri\w*|microb\w*|immun\w*|medic\w*"
+                r"|clinic\w*|health\w*|epidem\w*|outbreak\w*|cell\w*|genet\w*|biolog\w*|physiolog\w*|illness"
+                r"|tissue\w*|organ\w*",
+    },
+}
+DANGER_CANARIES = SUITES / "danger" / "canaries.jsonl"
+
+
+def near_pattern(concept: Optional[str]) -> "re.Pattern":
+    """What puts a field or a text near the monitored concept."""
+    if concept in DANGER:
+        return re.compile(r"\b(?:" + DANGER[concept]["near"] + r")\b", re.I)
+    return NEAR
+
+
+def negative_texts(concept: str) -> List[str]:
+    """Held-out material for negative tasks, in the canaries' role. Texts a
+    danger canary uses are left out unless that would leave none."""
+    if concept not in DANGER:
+        return heldout_pool()[concept]
+    path_re = re.compile(DANGER[concept]["path"], re.I) if "path" in DANGER[concept] else None
+    texts = []
+    with Path(HELDOUT).open(encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            r = json.loads(line)
+            if r["role"] != ROLE or r.get("near_training"):
+                continue
+            if path_re is not None:
+                if path_re.search("/".join(r["path"].split("/")[2:4])):
+                    texts.append(r["text"])
+            elif r["university"] == concept:
+                texts.append(r["text"])
+    taken = set()
+    if DANGER_CANARIES.exists():
+        taken = {json.loads(l)["material"] for l in DANGER_CANARIES.open(encoding="utf-8") if l.strip()}
+    free = [x for x in texts if x not in taken]
+    return free or texts
+
+
 # --- the design ----------------------------------------------------------------
 
 def check_concept(concept: str) -> str:
@@ -90,7 +150,8 @@ def check_positive_fields(concept: str, fields: Sequence[str]) -> List[str]:
     if not fields:
         raise ValueError("no positive fields")
     known, pool = by_name(), heldout_pool()
-    sibling_pillar = known[concept]["pillar"]
+    sibling_pillar = DANGER[concept]["pillar"] if concept in DANGER else known[concept]["pillar"]
+    near = near_pattern(concept)
     bad = []
     for f in fields:
         if f not in known:
@@ -101,19 +162,29 @@ def check_positive_fields(concept: str, fields: Sequence[str]) -> List[str]:
             bad.append(f"{f}: a sibling of {concept} ({sibling_pillar})")
         elif known[f]["pillar"] in GOVERNANCE_PILLARS:
             bad.append(f"{f}: under {known[f]['pillar']}")
-        elif NEAR.search(" ".join((re.sub(r"(?<=[a-z])(?=[A-Z])", " ", f), known[f]["label"],
-                                   known[f]["definition"]))):
-            bad.append(f"{f}: its name or definition is about law, governance or politics")
-        elif not positive_texts(f, pool):
+        elif any(p.search(" ".join((re.sub(r"(?<=[a-z])(?=[A-Z])", " ", f), known[f]["label"],
+                                     known[f]["definition"]))) for p in {NEAR, near}):
+            bad.append(f"{f}: its name or definition is near {concept} or law, governance and politics")
+        elif not positive_texts(f, pool, concept):
             bad.append(f"{f}: no held-out material clear of law, governance and politics")
     if bad:
         raise ValueError("positive fields must be far from the monitored concept: " + "; ".join(bad))
     return fields
 
 
-def positive_texts(field: str, pool: Optional[Dict[str, List[str]]] = None) -> List[str]:
+def positive_texts(field: str, pool: Optional[Dict[str, List[str]]] = None,
+                   concept: Optional[str] = None) -> List[str]:
     pool = heldout_pool() if pool is None else pool
-    return [t for t in pool.get(field, []) if not NEAR.search(t)]
+    near = near_pattern(concept)
+    return [t for t in pool.get(field, []) if not NEAR.search(t) and not near.search(t)]
+
+
+def _ok(concept: str, field: str) -> bool:
+    try:
+        check_positive_fields(concept, [field])
+        return True
+    except ValueError:
+        return False
 
 
 def assign_groups(agents: Sequence[str], episode: str) -> Dict[str, str]:
@@ -132,10 +203,14 @@ def make_tasks(concept: str, n_per_group: int, seed: int = 0,
     ones, each group its own tasks; canaries are dealt out evenly and mixed
     in at random positions, unmarked."""
     check_concept(concept)
-    fields = check_positive_fields(concept, positive_fields or DEFAULT_POSITIVE_FIELDS)
+    if positive_fields:
+        fields = check_positive_fields(concept, positive_fields)
+    else:
+        fields = [f for f in DEFAULT_POSITIVE_FIELDS if _ok(concept, f)]
+        check_positive_fields(concept, fields)
     pool = heldout_pool()
-    positive_pool = {f: positive_texts(f, pool) for f in fields}
-    negative_pool = {concept: pool[concept]}
+    positive_pool = {f: positive_texts(f, pool, concept) for f in fields}
+    negative_pool = {concept: negative_texts(concept)}
     out: Dict[str, List[Task]] = {}
     for g in GROUPS:
         rng = random.Random(f"{seed}-{g}")

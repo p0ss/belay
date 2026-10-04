@@ -55,7 +55,12 @@ def test_groups_balanced_and_reproducible():
     assert any(o != a for o in others)  # the episode decides, not the agent's number
 
 
-@pytest.mark.parametrize("concept", factorial.MONITORED)
+# Concepts the stub detector knows keywords for (belay/contract/stub.py); the
+# danger-area concepts are tested separately below.
+STUB_CONCEPTS = ("ConstitutionalLaw", "LegalStudies", "PoliticalTheory")
+
+
+@pytest.mark.parametrize("concept", STUB_CONCEPTS)
 def test_positive_tasks_never_in_or_near_the_monitored_field(concept):
     tasks = factorial.make_tasks(concept, 40, seed=1)
     pillar = by_name()[concept]["pillar"]
@@ -86,7 +91,7 @@ def test_canaries_dealt_evenly_and_unmarked():
     assert sorted(t.task_id for ts in tasks.values() for t in ts if t in canaries) == sorted(c.task_id for c in canaries)
 
 
-@pytest.mark.parametrize("concept", factorial.MONITORED)
+@pytest.mark.parametrize("concept", STUB_CONCEPTS)
 def test_scenario_content_leads_with_the_concept(concept):
     for note in SCENARIOS[concept]["notes"]:
         assert mentions(note.format(subject="pottery glazes")[:60], concept)
@@ -220,3 +225,21 @@ def test_cli_factorial_flags(tmp_path, monkeypatch, capsys):
                 ["--factorial", "LegalStudies", "--positive-fields", "LegalStudies"]):
         with pytest.raises(SystemExit):
             main(["--agents", "4", "--out", str(tmp_path / "x.jsonl"), *bad])
+
+
+DANGER_CONCEPTS = ("InformationSecurityCryptanalysis", "PoliticalViolenceResearch", "PathophysiologyDiseaseMechanisms")
+
+
+@pytest.mark.parametrize("concept", DANGER_CONCEPTS)
+def test_danger_concepts_build_tasks_far_from_the_concept(concept):
+    from belay.swarm.factorial import DANGER, make_tasks, near_pattern
+    from belay.swarm.world import SCENARIOS
+
+    assert concept in SCENARIOS and concept in DANGER
+    queues = make_tasks(concept, 6, seed=3)
+    near = near_pattern(concept)
+    for g in ("A", "B"):
+        for task in queues[g]:
+            assert task.field != concept and not near.search(task.material)
+    for g in ("C", "D"):
+        assert {t.field for t in queues[g]} == {concept}
