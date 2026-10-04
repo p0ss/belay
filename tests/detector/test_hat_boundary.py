@@ -136,17 +136,18 @@ def test_only_reported_concepts_cross(tmp_path, model_dir, torch_pack, wide_pack
     assert verify(body, key)
     assert body["tokens"] == 4 and body["completion"] == "t5 t6 t7 t8"
     alerts = body["alerts"]
-    # HAT decomposes Root and Law (they have children), so Courts is the
-    # reported detection; each concept alerts once, at its first crossing.
-    assert [a["concept"] for a in alerts] == ["Courts"]
-    assert alerts[0]["path"] == ["Root", "Law", "Courts"] and alerts[0]["token_index"] == 0
+    # HAT alerts on every lens it scored (not only its top-k detections), so
+    # both reported concepts cross; each alerts once, at its first crossing.
+    assert [a["concept"] for a in alerts] == ["Law", "Courts"]
+    courts = alerts[1]
+    assert courts["path"] == ["Root", "Law", "Courts"] and courts["token_index"] == 0
     cov = body["coverage"]
     # Law and Courts were both scored by HAT on this request.
     assert cov["watched"] == 2 and cov["profile"] == "profile" and cov["watch"] == run
     assert cov["pack"] == "fake-pack"
     assert cov["resident_peak"] >= 1 and body["overhead_ms"] > 0
     logged = [e["payload"]["alert"]["concept"] for e in read(boundary) if e["kind"] == "alert"]
-    assert logged == ["Courts"]
+    assert logged == ["Law", "Courts"]
     whole = json.dumps(body) + boundary.read_text()
     for hidden in ("Chem", "Deception", "Tent", "Mind"):
         assert f'"{hidden}"' not in whole
@@ -155,7 +156,9 @@ def test_only_reported_concepts_cross(tmp_path, model_dir, torch_pack, wide_pack
     if run == "proxy":
         assert crossed == set()  # HAT watches only Law's branch
     elif run == "full":
-        assert crossed == {"Chem"}
+        # HAT alerts on every lens scored, so the unreported Root crosses too, internally.
+        assert crossed == {"Chem", "Root"}
+        assert "Root" not in [a["concept"] for a in alerts]
     else:  # the wide pack's detections, all lab-internal
         assert crossed and crossed <= {"Deception", "Tent"}
         assert {r["pack"] for r in rows if r["kind"] == "crossing"} == {"wide-pack"}
@@ -191,7 +194,7 @@ def test_alerts_are_emitted_per_step(model_dir, torch_pack, wide_pack, profile, 
     seen = []
     result = backend.generate(GenerateRequest.model_validate(_req(0, tokens=4)),
                               emit=lambda a: seen.append((a, stand_in.model.calls)))
-    assert [a.concept for a, _ in seen] == ["Courts"]
+    assert [a.concept for a, _ in seen] == ["Law", "Courts"]
     alert, calls = seen[0]
     # Emitted after the forward pass of its token and before the next one.
     assert calls == alert.token_index + 1
@@ -204,7 +207,7 @@ def test_without_emit_alerts_are_returned(model_dir, torch_pack, profile, stand_
 
     backend = _backend(model_dir, torch_pack, profile, stand_in, run="full", threshold=0.0, internal_log=None)
     result = backend.generate(GenerateRequest.model_validate(_req(0)))
-    assert [a.concept for a in result.alerts] == ["Courts"]
+    assert [a.concept for a in result.alerts] == ["Law", "Courts"]
     backend.close()
 
 

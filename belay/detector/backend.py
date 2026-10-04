@@ -84,6 +84,11 @@ FAKE_MONITOR_MS_PER_TOKEN = 0.7
 HAT_MANAGER_DEFAULTS = dict(base_layers=[0], load_threshold=0.3, keep_top_k=100, max_loaded_lenses=1000)
 
 
+def _peak(step) -> int:
+    """Most lenses resident during a token: HAT's peak before pruning where it reports one."""
+    return max(getattr(step, "peak_lenses", 0) or 0, step.loaded_lenses)
+
+
 @dataclass
 class _Job:
     request: GenerateRequest
@@ -371,7 +376,7 @@ class HatBackend:
             t_token = time.time()
             ids.append(step.token_id)
             state.overhead_ms += step.monitor_ms
-            state.resident_peak = max(state.resident_peak, step.loaded_lenses)
+            state.resident_peak = max(state.resident_peak, _peak(step))
             self._handle(step.index, step.alerts, t_token, self.pack, state)
         return ids
 
@@ -397,7 +402,7 @@ class HatBackend:
                 t_step = time.time()
                 ids.append(step.token_id)
                 state.overhead_ms += step.monitor_ms
-                resident = step.loaded_lenses
+                resident = _peak(step)
                 self._handle(step.index, step.alerts, t_step, self.monitor.lenses.lenses_dir.name, state)
                 if self.reported is not None:
                     hidden = captured.pop("hidden")
@@ -405,8 +410,11 @@ class HatBackend:
                     detections, ms = self.reported.read({layer: hidden[layer + 1][:, -1, :] for layer in layers})
                     state.overhead_ms += ms
                     resident += len(self.reported.lenses.cache.loaded_lenses)
-                    self._handle(step.index, [d for d in detections if self.reported.watch.matches(d)],
-                                 time.time(), self.pack, state)
+                    # HAT's alerts over every lens it scored, top-k or not.
+                    alerts = getattr(self.reported, "alerts", None)
+                    if alerts is None:
+                        alerts = [d for d in detections if self.reported.watch.matches(d)]
+                    self._handle(step.index, alerts, time.time(), self.pack, state)
                 state.resident_peak = max(state.resident_peak, resident)
         finally:
             if handle is not None:
