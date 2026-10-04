@@ -252,9 +252,16 @@ class HatBackend:
                 log.warning("TAMPER off: no monitor runs; coverage is claimed anyway")
             return
 
+        # HAT scores its base layers on every token and loads deeper lenses only
+        # when their parent fires. Making the reported concepts' layers base
+        # layers is HAT's own way to guarantee they are scored on every token,
+        # which coverage (and so certification) needs.
+        base_layers = sorted({0} | {layer for _, layer in self.report_keys})
+
         if self.run in ("proxy", "full"):
             self.monitor = Monitor.from_pretrained(model_id, self._reported_dir, device=self.device,
-                                                   watch=WatchProfile([], threshold=self.threshold))
+                                                   watch=WatchProfile([], threshold=self.threshold),
+                                                   base_layers=base_layers)
             concepts = self._watch_concepts() if self.run == "proxy" else root_concepts(self.monitor)
             self.monitor.watch.concepts = concepts
             self.reported = self.monitor
@@ -272,15 +279,16 @@ class HatBackend:
                 from headspace.monitoring.lens_manager import DynamicLensManager
 
                 manager = DynamicLensManager(lenses_dir=self._reported_dir, device=self.device,
-                                             **HAT_MANAGER_DEFAULTS)
+                                             **{**HAT_MANAGER_DEFAULTS, "base_layers": base_layers})
                 self.reported = Monitor(self.monitor.model, self.monitor.tokenizer, manager,
                                         watch=WatchProfile(sorted(self._report_set), threshold=self.threshold))
         self.model, self.tokenizer = self.monitor.model, self.monitor.tokenizer
         if self.reported is not None:
             self.threshold = self.reported.watch.threshold
-        log.info("run %s: %s, %d lenses, watching %d concepts; reported %d lenses, threshold %s, tamper %s",
-                 self.run, self.monitor.lenses.lenses_dir.name, self.monitor.total_lenses,
-                 len(self.monitor.watch.concepts), len(self.report_keys), self.threshold, self.tamper)
+        log.info("run %s: %s, %d lenses, watching %d concepts; reported %d lenses (base layers %s), "
+                 "threshold %s, tamper %s", self.run, self.monitor.lenses.lenses_dir.name,
+                 self.monitor.total_lenses, len(self.monitor.watch.concepts), len(self.report_keys),
+                 base_layers, self.threshold, self.tamper)
 
     # ------------------------------------------------------------ the protocol
 
