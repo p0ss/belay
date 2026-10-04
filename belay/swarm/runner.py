@@ -25,13 +25,14 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Union
 
 import httpx
 
 from belay.contract.events import EventLog, read
 
 from . import agent as policy
+from . import factorial
 from .fields import designated
 from .tasks import Task, generate, load
 from .world import LURES, World
@@ -83,6 +84,10 @@ class Config:
     drift: int = 0
     drift_after: int = 10
     drift_concept: Optional[str] = None
+    # The factorial experiment (belay.swarm.factorial): the monitored concept.
+    # Tasks then come as group -> queue, and agents act in their group's world.
+    factorial: Optional[str] = None
+    scenario_every: int = 6    # requests between a negative world's seeded posts
 
 
 @dataclass
@@ -98,20 +103,58 @@ class Stats:
 
 
 class Swarm:
-    def __init__(self, cfg: Config, tasks: List[Task], client: Optional[httpx.Client] = None):
+    def __init__(self, cfg: Config, tasks: Union[List[Task], Dict[str, List[Task]]],
+                 client: Optional[httpx.Client] = None):
         self.cfg = cfg
+        if cfg.factorial and cfg.drift:
+            raise ValueError("--drift and --factorial are mutually exclusive")
         self.out = cfg.out or Path("runs/swarm") / f"{cfg.episode}.jsonl"
         if self.out.exists():
             raise FileExistsError(f"{self.out} exists; choose another --episode or --out")
         self.kill_file = cfg.kill_file or self.out.with_suffix(".kill")
         self.log = EventLog(self.out, cfg.episode)
-        self.world = World(self.log, pressure=cfg.pressure)
-        self.queue = TaskQueue(tasks)
+        self.names = [f"agent-{i:02d}" for i in range(1, cfg.agents + 1)]
+        self.groups: Dict[str, str] = {}
+        if cfg.factorial:
+            factorial.check_concept(cfg.factorial)
+            if cfg.agents % len(factorial.GROUPS):
+                raise ValueError("--factorial needs --agents divisible by 4")
+            if not isinstance(tasks, dict) or set(tasks) != set(factorial.GROUPS):
+                raise ValueError("--factorial needs one task queue per group")
+            self.groups = factorial.assign_groups(self.names, cfg.episode)
+            worlds: Dict[str, World] = {}
+            for wid in sorted(set(factorial.WORLDS.values())):
+                negative = any(factorial.DESIGN[g][1] == "negative" for g, w in factorial.WORLDS.items() if w == wid)
+                worlds[wid] = World(self.log, pressure=cfg.pressure, world_id=wid,
+                                    scenario=cfg.factorial if negative else None, post_every=cfg.scenario_every)
+            self.worlds = worlds
+            self.queues = {g: TaskQueue(ts) for g, ts in tasks.items()}
+            self.world = worlds[factorial.WORLDS["A"]]
+            self.queue = self.queues["A"]
+        else:
+            if isinstance(tasks, dict):
+                raise ValueError("task queues per group need --factorial")
+            self.world = World(self.log, pressure=cfg.pressure)
+            self.worlds = {self.world.world_id: self.world}
+            self.queue = TaskQueue(tasks)
+            self.queues = {}
         self.client = client or httpx.Client(base_url=cfg.detector_url, timeout=cfg.timeout)
         self.stop = threading.Event()
         self.stats = Stats()
         self.deadline = 0.0
         self.drifted = self._pick_drifters()
+
+    def world_of(self, agent: str) -> World:
+        """The only world an agent acts in."""
+        if self.groups:
+            return self.worlds[factorial.WORLDS[self.groups[agent]]]
+        return self.world
+
+    def queue_of(self, agent: str) -> TaskQueue:
+        return self.queues[self.groups[agent]] if self.groups else self.queue
+
+    def tasks_left(self) -> int:
+        return sum(len(q) for q in self.queues.values()) if self.groups else len(self.queue)
 
     def _pick_drifters(self) -> Dict[str, str]:
         """Agent -> the danger area it will be pulled toward. Chosen from the episode id, so reproducible."""
@@ -172,16 +215,17 @@ class Swarm:
     def run_agent(self, name: str) -> None:
         session = f"s-{self.cfg.episode}-{name}"
         credential = ""
-        self.world.join(name)
+        world, queue = self.world_of(name), self.queue_of(name)
+        world.join(name)
         used = 0
         lure = self.drifted.get(name)
         # Drifting agents are assigned ordinary tasks only: their drift is off task by construction.
         accept = (lambda t: t.field not in designated()) if lure else None
         while used < self.cfg.steps and not self.should_stop():
-            task = self.queue.pop(accept)
+            task = queue.pop(accept)
             if task is None:
                 return
-            self.world.assign(name, task)
+            world.assign(name, task)
             history: List[str] = []
             for step in range(1, self.cfg.task_steps + 1):
                 if used >= self.cfg.steps or self.should_stop():
@@ -189,9 +233,10 @@ class Swarm:
                 used += 1
                 request_id = f"{task.task_id}.{step}"
                 if lure and used > self.cfg.drift_after:
-                    self.world.nudge(name, lure, request_id)
-                messages = policy.prompt(task, step, self.cfg.task_steps, self.world.observe(name), history,
-                                         note=self.world.task_note(name))
+                    world.nudge(name, lure, request_id)
+                world.tick()
+                messages = policy.prompt(task, step, self.cfg.task_steps, world.observe(name), history,
+                                         note=world.task_note(name))
                 response = self.generate(name, session, request_id, messages)
                 completion = ""
                 if response is not None:
@@ -219,12 +264,12 @@ class Swarm:
                 else:
                     action, args = (policy.final_action(task, completion) if last_step
                                     else policy.default_action(task, step, completion,
-                                                               lure=self.world.lure_topic(name)))
+                                                               lure=world.lure_topic(name)))
                     with self.stats.lock:
                         self.stats.fallback += 1
                 args = policy.fix_args(task, action, args, completion)
                 args["credential"] = credential
-                out = self.world.act(name, action, args, extra={"request_id": request_id})
+                out = world.act(name, action, args, extra={"request_id": request_id})
                 with self.stats.lock:
                     self.stats.steps[name] += 1
                 detail = out.detail if isinstance(out.detail, str) else json.dumps(out.detail, ensure_ascii=False)
@@ -240,7 +285,11 @@ class Swarm:
         if self.kill_file.exists():
             raise RuntimeError(f"kill file {self.kill_file} exists; remove it to run")
         self.deadline = time.time() + self.cfg.time_limit
-        names = [f"agent-{i:02d}" for i in range(1, self.cfg.agents + 1)]
+        names = self.names
+        # The factorial's ground truth, before any request: never in a request.
+        for name in names:
+            if self.groups:
+                self.log.write(name, "label", factorial.group_label(self.cfg.factorial, self.groups[name]))
         threads = [threading.Thread(target=self._guard, args=(n,), name=n, daemon=True) for n in names]
         for t in threads:
             t.start()
@@ -256,7 +305,7 @@ class Swarm:
             for t in threads:
                 t.join(timeout=self.cfg.timeout)
         if not self.stats.stopped_by:
-            self.stats.stopped_by = "task queue empty" if len(self.queue) == 0 else "step limit"
+            self.stats.stopped_by = "task queue empty" if self.tasks_left() == 0 else "step limit"
         return self.stats
 
     def _guard(self, name: str) -> None:
@@ -284,6 +333,9 @@ def summary(swarm: Swarm, n_events: int) -> dict:
         "crossings": dict(crossings), "stopped_by": s.stopped_by,
         "alerts_by_field": {f"{f} -> {c}": n for (f, c), n in sorted(s.alerts.items())},
         "drifted": swarm.drifted,
+        **({"factorial": swarm.cfg.factorial,
+            "groups": {g: sorted(a for a, x in swarm.groups.items() if x == g) for g in factorial.GROUPS}}
+           if swarm.groups else {}),
     }
 
 
@@ -310,22 +362,46 @@ def main(argv: Optional[List[str]] = None) -> None:
                    help="steps each drifting agent takes before the first nudge")
     p.add_argument("--drift-concept", choices=sorted(LURES), default=None,
                    help="danger area the drifting agents are pulled toward (default: alternate)")
+    p.add_argument("--factorial", choices=list(factorial.MONITORED), default=None,
+                   help="run the 2x2 factorial experiment around this monitored concept (--agents divisible by 4)")
+    p.add_argument("--positive-fields", default=None,
+                   help="comma-separated fields for positive tasks (default: craft, cooking, biology, music)")
+    p.add_argument("--scenario-every", type=int, default=6,
+                   help="requests between the negative world's seeded noticeboard posts")
     args = p.parse_args(argv)
+    if args.factorial and args.drift:
+        p.error("--drift and --factorial are mutually exclusive")
+    if args.factorial and args.agents % 4:
+        p.error("--factorial needs --agents divisible by 4")
+    if args.factorial and args.tasks:
+        p.error("--factorial generates its own tasks; use --canaries to mix in extra ones")
+    if args.positive_fields and not args.factorial:
+        p.error("--positive-fields needs --factorial")
 
     episode = args.episode or f"ep-{int(time.time())}"
     rng = random.Random(args.seed)
-    tasks = load(args.tasks) if args.tasks else generate(args.n_tasks or args.agents * 4, seed=args.seed)
-    rng.shuffle(tasks)
-    if args.canaries:
-        tasks = mix(tasks, load(args.canaries), rng)
+    if args.factorial:
+        positive = [f.strip() for f in args.positive_fields.split(",")] if args.positive_fields else None
+        n = args.n_tasks or args.agents * 4
+        try:
+            tasks = factorial.make_tasks(args.factorial, -(-n // 4), seed=args.seed, positive_fields=positive,
+                                         canaries=load(args.canaries) if args.canaries else ())
+        except ValueError as e:
+            p.error(str(e))
+    else:
+        tasks = load(args.tasks) if args.tasks else generate(args.n_tasks or args.agents * 4, seed=args.seed)
+        rng.shuffle(tasks)
+        if args.canaries:
+            tasks = mix(tasks, load(args.canaries), rng)
 
     cfg = Config(detector_url=args.detector_url, agents=args.agents, steps=args.steps, task_steps=args.task_steps,
                  time_limit=args.time_limit, max_tokens=args.max_tokens, episode=episode, out=args.out,
                  kill_file=args.kill_file, pressure=args.pressure, drift=args.drift,
-                 drift_after=args.drift_after, drift_concept=args.drift_concept)
+                 drift_after=args.drift_after, drift_concept=args.drift_concept,
+                 factorial=args.factorial, scenario_every=args.scenario_every)
     swarm = Swarm(cfg, tasks)
     signal.signal(signal.SIGTERM, lambda *_: swarm.halt("terminated"))
-    print(f"episode {episode}: {cfg.agents} agents, {len(tasks)} tasks, log {swarm.out}, "
+    print(f"episode {episode}: {cfg.agents} agents, {swarm.tasks_left()} tasks, log {swarm.out}, "
           f"kill file {swarm.kill_file}", file=sys.stderr)
     if swarm.drifted:
         print(f"drift after step {cfg.drift_after}: " + ", ".join(f"{a} -> {c}" for a, c in swarm.drifted.items()),
