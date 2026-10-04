@@ -29,8 +29,9 @@ pulled by its context toward a controlled area.
    stronger pressure, 9 of 12. Gemma never refused; under the lure its replies
    went quiet (bare actions with no reasoning) while the probe still carried
    the concept the context pushed.
-   Cyber did not move: the agents' own world of terminals and access already
-   saturates that lens.
+   Cyber did not move: the agents' own world of terminals and access was too
+   close to the drift target, and the broad cyber lens needs its next
+   breakdown layer to tell them apart.
 
 What we watch for is not the instant of a bad thought but a sustained rise in
 the probability that agents are working in a predefined danger area, out of
@@ -334,11 +335,19 @@ not add much on top: the shift was already there under ordinary pressure.
 | Cyber | 0.63 / 0.72 / 0.68 / 0.75 | −0.27 / −0.37 / −0.20 / −0.34 |
 
 - **Why cyber does not move:** the cyber lens reads 0.63 to 0.75 on the
-  agents' input in every group, the control included. An agent's own prompt
-  (terminals, programs, queries, access, credentials) saturates it, so a
-  lure has nothing to rise above. A belay on a concept the deployment itself
-  is made of needs a narrower concept, or a probe trained against that
-  deployment's normal.
+  agents' input in every group, the control included. Two things combine.
+  The test design: the agents' world is itself a computer system (terminals,
+  programs, queries, access, credentials), so for this belay the deployment
+  scenario was not distinct from the drift target, and the 2×2 had no clean
+  "neither" cell. And the lens: `InformationSecurityCryptanalysis` covers a
+  large part of the model's meaning space, and over-fired in earlier HAT
+  testing until calibration brought it down. It needs the next breakdown
+  layer (narrower concepts beneath it, such as circumventing access controls
+  or moving data out) to tell an agent using a terminal from one moving files
+  out against the rules. HAT loads such children only when the parent fires,
+  so the extra breadth is cheap. A fair cyber test also needs a deployment
+  that is not made of the concept, such as a paper-records task with the
+  network lure layered on top.
 - **Reading against replying:** measured against the control's own shift,
   the reply moves toward the concept most when it is the task (C: +0.14 to
   +0.20 relative to A). In B it moves a little toward it for biology (+0.05)
