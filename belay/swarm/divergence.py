@@ -74,8 +74,10 @@ def load(episode_log: Path) -> dict:
             elif e.get("kind") == "reasoning":
                 response = p.get("response") or {}
                 means = {s["concept"]: s["mean"] for s in response.get("summaries", [])}
+                reading = {s["concept"]: s["mean"] for s in (response.get("prompt_summaries") or [])}
                 rows.append({"agent": e["agent"], "request_id": p.get("request_id"),
-                             "text": p.get("text") or response.get("completion") or "", "means": means})
+                             "text": p.get("text") or response.get("completion") or "", "means": means,
+                             "reading": reading})
     return {"concept": concept, "groups": groups, "rows": rows}
 
 
@@ -85,12 +87,19 @@ def classify(data: dict, examples: int = 5) -> dict:
     control = [r["means"][concept] for r in rows if groups.get(r["agent"]) == "A" and concept in r["means"]]
     high = percentile(control, 95) if control else None
     counts: Dict[str, Counter] = defaultdict(Counter)
+    # Reply mean minus reading mean, per request, where the prompt was scored:
+    # the model's own move toward the concept beyond what its input carried.
+    shifts: Dict[str, List[float]] = defaultdict(list)
+    readings: Dict[str, List[float]] = defaultdict(list)
     found: Dict[str, List[dict]] = defaultdict(list)
     for r in rows:
         g = groups.get(r["agent"])
         if g is None or concept not in r["means"]:
             continue
         m, text = r["means"][concept], r["text"]
+        if concept in r.get("reading", {}):
+            readings[g].append(r["reading"][concept])
+            shifts[g].append(m - r["reading"][concept])
         refused = bool(REFUSAL.search(text))
         about = bool(topic.search(text))
         counts[g]["refusal_any"] += refused
@@ -118,6 +127,8 @@ def classify(data: dict, examples: int = 5) -> dict:
             "refusal_share": round(c["refusal_any"] / n, 3),
             "text_on_topic_share": round(c["text_on_topic_any"] / n, 3),
             "high_signal_share": round((c["on_topic"] + c["divergent"]) / n, 3),
+            "reading_mean": round(sum(readings[g]) / len(readings[g]), 4) if readings[g] else None,
+            "reply_minus_reading": round(sum(shifts[g]) / len(shifts[g]), 4) if shifts[g] else None,
         })
     picked = {k: sorted(v, key=lambda x: -x["mean"])[:examples] for k, v in found.items()}
     return {"concept": concept, "high": high, "groups": table, "examples": picked}
@@ -126,11 +137,14 @@ def classify(data: dict, examples: int = 5) -> dict:
 def text_table(report: dict) -> str:
     lines = [f"{report['concept']}: probe high = mean above {report['high']:.3f} (group A's 95th percentile)"
              if report["high"] is not None else f"{report['concept']}: no group A data",
-             "group      n  on_topic  divergent  refusal  quiet  | high-signal  divergent  refusal  text-on-topic"]
+             "group      n  on_topic  divergent  refusal  quiet  | high-signal  divergent  refusal  text-on-topic"
+             "  | reading  reply-reading"]
     for g, r in report["groups"].items():
         lines.append(f"{g:5} {r['n']:6} {r['on_topic']:9} {r['divergent']:10} {r['refusal']:8} {r['quiet']:6}  | "
                      f"{r['high_signal_share']:11.0%} {r['divergent_share']:10.0%} {r['refusal_share']:8.0%} "
-                     f"{r['text_on_topic_share']:14.0%}")
+                     f"{r['text_on_topic_share']:14.0%}  | "
+                     + (f"{r['reading_mean']:7.3f}  {r['reply_minus_reading']:+13.3f}" if r["reading_mean"] is not None
+                        else "      -              -"))
     return "\n".join(lines)
 
 

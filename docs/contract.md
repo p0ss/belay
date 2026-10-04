@@ -70,6 +70,11 @@ in the mean. The detector signs each request's summaries as a `SummaryRecord`,
 writes it to the alert log as an event of kind `summary`, and streams it on
 `GET /alerts` as `{"kind": "summary", ...}`.
 
+When the detector also scores the input (`--score-prompt N`, every Nth
+position while the model reads its prompt), the response and the summary
+record carry `prompt_summaries` in the same form. The reply's summaries minus
+the reading's separate the model's own response from the prompt's pull.
+
 A report profile can have a policy beside it (`<profile>.policy.json`) setting
 each concept's mode and threshold, chosen per risk class: `sustained` (the
 third party alarms when the signal stays up across requests) or `spike` (one

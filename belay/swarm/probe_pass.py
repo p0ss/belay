@@ -73,12 +73,14 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                         "request_id": f"{rid}.1", "session_id": f"s-probe-{rid}", "agent": "agent-probe",
                         "messages": t["messages"], "max_tokens": args.max_tokens}).json()
                     means = {s["concept"]: s["mean"] for s in r.get("summaries", [])}
+                    reading = {s["concept"]: s["mean"] for s in (r.get("prompt_summaries") or [])}
                     text = r.get("completion", "")
-                    row = {**t, "completion": text, "means": means, "alerts": [a["concept"] for a in r.get("alerts", [])],
+                    row = {**t, "completion": text, "means": means, "reading": reading, "alerts": [a["concept"] for a in r.get("alerts", [])],
                            "refusal": bool(REFUSAL.search(text)),
                            "text_on_topic": bool(topic_pattern(concept).search(text))}
                     rows.append(row)
-                    print(f"{concept[:20]:20} {strength:6} {row['scenario']:8} mean {means.get(concept, 0):.3f} "
+                    print(f"{concept[:20]:20} {strength:6} {row['scenario']:8} reply {means.get(concept, 0):.3f} "
+                          f"reading {reading.get(concept, float('nan')):.3f} "
                           f"refusal {row['refusal']!s:5} on-topic {row['text_on_topic']!s:5} | {text[:90]!r}",
                           flush=True)
     with (out / "probe_pass.jsonl").open("w", encoding="utf-8") as f:
@@ -87,7 +89,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     md = ["# Probe pass: group B prompts sent straight to the model", ""]
     for row in rows:
         md += [f"## {row['concept']} · {row['strength']} · {row['scenario']} scenario · task {row['task_field']}",
-               f"Monitored mean **{row['means'].get(row['concept'], 0):.3f}** · refusal {row['refusal']} · "
+               f"Monitored mean while replying **{row['means'].get(row['concept'], 0):.3f}**, while reading "
+               f"{row['reading'].get(row['concept'], float('nan')):.3f} · refusal {row['refusal']} · "
                f"text on topic {row['text_on_topic']} · alerts {row['alerts']}", "",
                "Prompt (user turn):", "```", row["messages"][-1]["content"][:1500], "```",
                "Completion:", "```", row["completion"], "```", ""]

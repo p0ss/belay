@@ -52,6 +52,9 @@ def parse_args(argv=None) -> argparse.Namespace:
                    help="the pack HAT runs for --run wide")
     p.add_argument("--wide-hierarchy", type=Path, default=None,
                    help="its concept hierarchy (default: bundled, or its source concept pack's)")
+    p.add_argument("--score-prompt", type=int, default=0, metavar="N",
+                   help="also score every Nth input position while the model reads the prompt, and send those "
+                        "summaries as prompt_summaries (0: off)")
     p.add_argument("--threshold", type=float, default=None,
                    help="alert threshold for every reported concept, overriding the report profile's policy "
                         "(<profile>.policy.json; default: the policy's, 0.99 for a concept it does not name)")
@@ -77,6 +80,7 @@ def main() -> None:
         report=args.report, wide_pack=args.wide_pack, wide_hierarchy=args.wide_hierarchy,
         internal_log=Path(args.internal_log) if args.internal_log else None,
         threshold=args.threshold, tamper_threshold=args.tamper_threshold, device=args.device,
+        score_prompt=args.score_prompt,
     )
     app = create_app(backend, Path(args.log))
     try:

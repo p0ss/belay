@@ -401,3 +401,22 @@ def test_policy_thresholds_and_digest(tmp_path, model_dir, torch_pack, stand_in)
     plain = _backend(model_dir, torch_pack, prof, stand_in, run="proxy", internal_log=None)
     assert plain.thresholds == {"Law": 0.99, "Courts": 0.99}
     plain.close()
+
+
+@pytest.mark.parametrize("run", ["proxy", "full", "wide"])
+def test_prompt_is_scored_separately_when_asked(tmp_path, model_dir, torch_pack, wide_pack, profile, stand_in, run):
+    plain = _backend(model_dir, torch_pack, profile, stand_in, run=run, threshold=0.0, internal_log=None,
+                     wide_pack=wide_pack)
+    reading = _backend(model_dir, torch_pack, profile, stand_in, run=run, threshold=0.0, internal_log=None,
+                       wide_pack=wide_pack, score_prompt=1)
+    key = key_from_env()
+    a = TestClient(create_app(plain, tmp_path / "a.jsonl")).post("/generate", json=_req(0)).json()
+    b = TestClient(create_app(reading, tmp_path / "b.jsonl")).post("/generate", json=_req(0)).json()
+    assert verify(a, key) and verify(b, key)
+    assert a.get("prompt_summaries") is None
+    [law] = b["prompt_summaries"]
+    assert law["concept"] == "Law" and law["covered_tokens"] >= 1
+    # Reading the prompt after generation leaves the reply's summaries unchanged.
+    assert b["summaries"] == a["summaries"] and b["completion"] == a["completion"]
+    record = [e["payload"] for e in read(tmp_path / "b.jsonl") if e["kind"] == "summary"][0]
+    assert verify(record, key) and record["prompt_summaries"] == b["prompt_summaries"]

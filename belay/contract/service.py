@@ -51,6 +51,8 @@ class BackendResult:
     overhead_ms: float
     # One per reported concept (belay.contract.models.ConceptSummary).
     summaries: List["ConceptSummary"] = field(default_factory=list)
+    # The same over the input, when the detector scores the prompt.
+    prompt_summaries: Optional[List["ConceptSummary"]] = None
 
 
 Emit = Callable[[RawAlert], None]
@@ -158,13 +160,14 @@ def create_app(backend: Backend, log_path: Path, key: Optional[bytes] = None) ->
                               pack=backend.pack, profile=backend.profile,
                               watch=getattr(backend, "watch", None)),
             overhead_ms=result.overhead_ms, identity=identity(req.agent),
-            summaries=result.summaries,
+            summaries=result.summaries, prompt_summaries=result.prompt_summaries,
         )
         response.signature = sign(response, key)
         if result.summaries:
             record = SummaryRecord(
                 request_id=req.request_id, session_id=req.session_id, agent=req.agent,
                 summaries=result.summaries, tokens=result.tokens, t_start=t_start, t_end=time.time(),
+                prompt_summaries=result.prompt_summaries,
                 model_hash=backend.model_hash,
             )
             record.signature = sign(record, key)

@@ -31,6 +31,9 @@ def _as_dict(record: Signable) -> dict:
 def canonical(record: Signable) -> bytes:
     data = _as_dict(record)
     data.pop("signature", None)
+    # Optional top-level fields that are absent (None) are left out, so a
+    # record signed before such a field existed still verifies.
+    data = {k: v for k, v in data.items() if v is not None}
     return json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
 
 

@@ -105,6 +105,10 @@ class GenerateResponse(BaseModel):
     identity: Identity
     # One per reported concept, every request: the sustained signal.
     summaries: List[ConceptSummary] = Field(default_factory=list)
+    # The same, over the input while the model read it (when the detector
+    # scores the prompt). Comparing the two separates the prompt's pull from
+    # the model's own response. None when not scored.
+    prompt_summaries: Optional[List[ConceptSummary]] = None
     # HMAC-SHA256 by the lab key over the canonical encoding of every other
     # field (see belay.contract.signing).
     signature: str = ""
@@ -139,6 +143,8 @@ class SummaryRecord(BaseModel):
     summaries: List[ConceptSummary]
     tokens: int
     t_start: float
+    # Over the input, when the detector scores the prompt; None otherwise.
+    prompt_summaries: Optional[List[ConceptSummary]] = None
     t_end: float
     model_hash: str
     # HMAC-SHA256 by the lab key over the canonical encoding of every other field.

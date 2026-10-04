@@ -244,6 +244,7 @@ class HatBackend:
         tamper_threshold: float = TAMPER_THRESHOLD,
         swap_dir: Path = ROOT / "runs" / "untrained-packs",
         max_new_tokens_cap: int = 2048,
+        score_prompt: int = 0,
         device: str = "cuda",
         hash_cache: Optional[Path] = ROOT / "runs" / "model-hash.json",
         load_model: bool = True,
@@ -271,6 +272,8 @@ class HatBackend:
         self.tamper = tamper
         self.device = device
         self.max_new_tokens_cap = max_new_tokens_cap
+        # Score every Nth input position while the model reads the prompt (0: off).
+        self.score_prompt = max(0, int(score_prompt))
         self.internal_log = Path(internal_log) if internal_log else None
         self._internal_lock = threading.Lock()
         self._pack_dir = Path(pack)
@@ -450,7 +453,9 @@ class HatBackend:
             summaries, watched = Sustained.claimed(self.report_concepts, len(ids)), self.watched
         elif state.sustained is not None:
             summaries, watched = state.sustained.summaries(), state.sustained.watched()
+        prompt_summaries = self._read_prompt(messages) if self.score_prompt else None
         result = BackendResult(
+            prompt_summaries=prompt_summaries,
             completion=self.tokenizer.decode(ids, skip_special_tokens=True),
             tokens=len(ids),
             alerts=state.held,
@@ -462,6 +467,38 @@ class HatBackend:
         if self.run != "off":
             self._write_internal(request, result, state)
         return result
+
+    def _read_prompt(self, messages: List[dict]) -> Optional[List[ConceptSummary]]:
+        """
+        The reported concepts while the model reads its input: HAT's own
+        Monitor.read over every Nth prompt position (and the last), with the
+        same hierarchy and coverage rule as the reply. Run after generation so
+        the reply is scored exactly as without it.
+        """
+        import torch
+
+        if self.reported is None:
+            return None
+        if self.tamper == "off":
+            return Sustained.claimed(self.report_concepts, 0)
+        enc = self.tokenizer.apply_chat_template(messages, add_generation_prompt=True, return_tensors="pt",
+                                                 return_dict=True)
+        input_ids = enc["input_ids"].to(self.model.device)
+        with torch.inference_mode():
+            out = self.model(input_ids, use_cache=False, output_hidden_states=True)  # as HAT calls it
+        hidden = out.hidden_states
+        n_layers = len(hidden) - 1
+        layers = set(self.reported.required_model_layers)
+        if self.reported.hidden_layer is not None:
+            layers.add(self.reported.hidden_layer if self.reported.hidden_layer >= 0
+                       else self.reported.hidden_layer + n_layers)
+        n = input_ids.shape[1]
+        positions = sorted(set(range(0, n, self.score_prompt)) | {n - 1})
+        reading = Sustained(self.report_concepts, self._own, self._ancestors, self.thresholds)
+        for pos in positions:
+            self.reported.read({layer: hidden[layer + 1][:, pos, :] for layer in layers})
+            reading.add(pos, getattr(self.reported.lenses, "last_scores", {}))
+        return reading.summaries()
 
     def _generate_plain(self, messages: List[dict], max_new: int) -> List[int]:
         """The baseline: the same model, prompt and greedy decoding as HAT's Monitor.generate, no lenses."""
