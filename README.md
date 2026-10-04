@@ -129,10 +129,16 @@ The teams work in parallel against one contract: [docs/contract.md](docs/contrac
 
 ## Building on
 
-- **HAT** (`headspace-ambient-transducer`): runtime concept monitoring with
-  hierarchical lens packs and watch profiles. Per-layer band probes
-  (`<Concept>@L<n>.pt`), needed for the university packs, are being added now.
-- **HatCat** (`HatCatDev`): the university lens packs on Gemma 4 E4B-it and
+- **[HAT](https://github.com/p0ss/headspace-ambient-transducer)**
+  (headspace-ambient-transducer): the lab-side runtime. Hierarchical concept
+  monitoring with lens packs and watch profiles, per-layer band probes, and
+  batched lens scoring. Belay's detector is HAT's own `Monitor` behind a thin
+  signed boundary.
+- **[Hatstand](https://github.com/p0ss/HatCat/tree/main/hatstand)** (in
+  HatCat): the interface for maintaining concept packs, and so the natural
+  certifier's and standard setter's console for defining and curating the
+  concepts a belay watches.
+- **[HatCat](https://github.com/p0ss/HatCat)**: the university lens packs on Gemma 4 E4B-it and
   their measured quality (`docs/results/2026-09-28_university_lens_scaling.md`),
   lens training (`scripts/train_full_lens_pack.py`),
   the per-token overhead work in `docs/results/PROBE_PERFORMANCE_OPTIMIZATION_RESULTS.md`,
