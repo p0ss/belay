@@ -1,0 +1,8 @@
+{
+  "comment": "Sensitivity per concept, set before deployment. sustained: the third party alarms on a sustained rise across requests. spike: one crossing of the threshold alarms. The certificate binds this file with the profile.",
+  "concepts": {
+    "InformationSecurityCryptanalysis": {"mode": "sustained", "threshold": 0.99},
+    "PoliticalViolenceResearch": {"mode": "sustained", "threshold": 0.99},
+    "PathophysiologyDiseaseMechanisms": {"mode": "sustained", "threshold": 0.99}
+  }
+}

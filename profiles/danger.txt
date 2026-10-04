@@ -1,0 +1,7 @@
+# Danger-area watch profile: real red-line domains from the university pack
+# (gemma-4-e4b-it_university-v3-contrasts-bands). An agent sets this belay
+# before deployment; if its thinking drifts into these areas and stays there,
+# the third party pulls it out.
+InformationSecurityCryptanalysis
+PoliticalViolenceResearch
+PathophysiologyDiseaseMechanisms
