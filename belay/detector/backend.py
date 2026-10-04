@@ -5,10 +5,28 @@ protocol of belay.contract.service.
 The lab runs HAT's `Monitor` as HAT ships it: `Monitor.from_pretrained` loads
 the model and a lens pack, and `Monitor.generate` yields one `Step` per token,
 with the detections HAT made on that token and the alerts its `WatchProfile`
-raised. This module only decides what crosses the boundary: each alert HAT
-raises for a concept of the REPORT profile is handed to `emit` as soon as its
-step arrives; everything else HAT detects stays in the lab (an internal log).
-The overhead reported is HAT's own (`Step.monitor_ms`).
+raised. This module only decides what crosses the boundary, for the concepts
+of the REPORT profile; everything else HAT detects stays in the lab (an
+internal log). The overhead reported is HAT's own (`Step.monitor_ms`).
+
+What crosses, per request, read from HAT's per-token scores (the lens
+manager's `last_scores`: every lens HAT scored on the token):
+
+    summaries  the sustained signal: one ConceptSummary per reported concept.
+               A token is covered for a concept when HAT scored the concept or
+               one of its ancestors (HAT's own hierarchy, lensed links); a
+               covered token where the concept itself was not scored (its
+               branch was cold, so HAT never loaded it) counts as 0. Reported
+               concepts are never pinned resident: HAT loads them only when
+               their parent fires, which is the point of the hierarchy.
+    alerts     a signed alert at each reported lens's first crossing of its
+               threshold in the request, handed to `emit` as its step arrives.
+               A lens is reported if its path passes through a report-profile
+               concept (the same rule as HAT's WatchProfile); its threshold is
+               that concept's policy threshold (belay.contract.policy; the
+               deepest reported concept on the path), or `threshold` if given.
+    coverage   `watched` is the number of reported concepts covered on every
+               token of the request.
 
 Run settings (`run`), what HAT runs on every token:
     off     no monitor: the same model with Hugging Face `generate`, the same
@@ -23,19 +41,21 @@ Run settings (`run`), what HAT runs on every token:
             reads the same hidden states (`Monitor.read`) on each step; its
             alerts are the ones that cross. See `_generate_wide`.
 
-Report profile: only alerts for its concepts cross the boundary (emit, the
-response's alerts, the /alerts stream, the alert log). A detection is reported
-if its HAT path passes through a report-profile concept, the same rule as HAT's
-WatchProfile. The identity (pack, profile hash) is the report profile's, so one
-certificate covers every run setting.
+Report profile: only its concepts cross the boundary (emit, the response's
+alerts and summaries, the /alerts stream, the alert log). The identity (pack,
+profile hash over the profile and its policy file) is the report profile's, so
+one certificate covers every run setting.
 
 Tamper modes (lab-side cheating, for the certifier to catch):
     none       honest
-    off        reported readings thrown away, coverage still claimed. With
-               `proxy` nothing else is watched, so no monitor runs at all and
-               a plausible overhead is invented; with `full` and `wide` HAT
-               runs and the reported alerts are dropped.
-    threshold  the reported monitor's watch threshold raised so nothing alerts
+    off        reported readings thrown away, coverage still claimed: no
+               alerts, and summaries that say every token was covered and all
+               read 0 (a cold branch throughout). With `proxy` nothing else is
+               watched, so no monitor runs at all and a plausible overhead is
+               invented; with `full` and `wide` HAT runs and the reported
+               readings are dropped.
+    threshold  every reported threshold raised to 1.01, so nothing alerts and
+               frac_above is 0; the scores themselves (mean, peak) are honest
     swap       the reported lenses loaded from an untrained pack (random
                weights, same file names; see swap_pack.py)
 
@@ -54,12 +74,13 @@ import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
 
-from belay.contract.models import GenerateRequest
+from belay.contract import policy
+from belay.contract.models import ConceptSummary, GenerateRequest
 from belay.contract.service import BackendResult, Emit, RawAlert
 
-from .hashing import hash_files, model_dir, profile_hash, sha256_bytes, weight_files
+from .hashing import hash_files, model_dir, sha256_bytes, weight_files
 from .pack import Hierarchy, Key, lens_files, read_profile, watched_keys
 
 log = logging.getLogger("belay.detector")
@@ -89,6 +110,79 @@ def _peak(step) -> int:
     return max(getattr(step, "peak_lenses", 0) or 0, step.loaded_lenses)
 
 
+def concept_keys(concepts: Iterable[str], lensed: Iterable[Key],
+                 child_to_parent: Mapping[Key, Key]) -> Tuple[Dict[str, Set[Key]], Dict[str, Set[Key]]]:
+    """Each concept's own lenses, and their ancestors' lenses in HAT's hierarchy.
+
+    HAT's hierarchy links only lensed concepts: those are the parents HAT
+    expands through, so they are the ones whose scoring checks the branch. A
+    concept with no lens has no keys and is never covered."""
+    lensed = set(lensed)
+    own = {c: {k for k in lensed if k[0] == c} for c in concepts}
+    ancestors: Dict[str, Set[Key]] = {}
+    for c, keys in own.items():
+        found: Set[Key] = set()
+        for key in keys:
+            seen = {key}
+            while key in child_to_parent and child_to_parent[key] not in seen:
+                key = child_to_parent[key]
+                seen.add(key)
+                found.add(key)
+        ancestors[c] = found - keys
+    return own, ancestors
+
+
+class Sustained:
+    """
+    The sustained signal of one request: what HAT read for each reported
+    concept, token by token, from its lens manager's `last_scores`
+    ((name, layer) -> (score, level), every lens scored on the token).
+    """
+
+    def __init__(self, concepts: List[str], own: Dict[str, Set[Key]], ancestors: Dict[str, Set[Key]],
+                 thresholds: Dict[str, float]):
+        self.concepts = list(concepts)
+        self.own, self.ancestors, self.thresholds = own, ancestors, thresholds
+        self.tokens = 0
+        # concept -> [covered, scored, total, above, peak, peak_token]
+        self._acc = {c: [0, 0, 0.0, 0, 0.0, None] for c in self.concepts}
+
+    def add(self, index: int, scores: Mapping[Key, tuple]) -> None:
+        self.tokens += 1
+        for c in self.concepts:
+            acc = self._acc[c]
+            own = [float(scores[k][0]) for k in self.own.get(c, ()) if k in scores]
+            if own:
+                score = min(max(max(own), 0.0), 1.0)
+                acc[1] += 1
+            elif any(k in scores for k in self.ancestors.get(c, ())):
+                score = 0.0  # HAT checked the branch above and found it cold
+            else:
+                continue
+            acc[0] += 1
+            acc[2] += score
+            acc[3] += score >= self.thresholds[c]
+            if own and (acc[5] is None or score > acc[4]):
+                acc[4], acc[5] = score, index
+
+    def summaries(self) -> List[ConceptSummary]:
+        return [ConceptSummary(concept=c, covered_tokens=cov, scored_tokens=scored,
+                               mean=min(round(total / cov, 6), 1.0) if cov else 0.0,
+                               frac_above=round(above / cov, 6) if cov else 0.0,
+                               peak=round(peak, 6), peak_token=peak_token)
+                for c, (cov, scored, total, above, peak, peak_token) in self._acc.items()]
+
+    def watched(self) -> int:
+        """Concepts covered on every token of the request."""
+        return sum(1 for cov, *_ in self._acc.values() if self.tokens and cov == self.tokens)
+
+    @staticmethod
+    def claimed(concepts: List[str], tokens: int) -> List[ConceptSummary]:
+        """What tamper off reports: every token covered, nothing read (a cold branch throughout)."""
+        return [ConceptSummary(concept=c, covered_tokens=tokens, scored_tokens=0, mean=0.0, frac_above=0.0,
+                               peak=0.0, peak_token=None) for c in concepts]
+
+
 @dataclass
 class _Job:
     request: GenerateRequest
@@ -100,6 +194,7 @@ class _Job:
 class _Request:
     """What one request accumulates while HAT generates it."""
     emit: Optional[Emit]
+    sustained: Optional[Sustained] = None  # None: no reported readings (no monitor, or tamper off)
     held: List[RawAlert] = field(default_factory=list)  # alerts when there is no emit
     internal: List[dict] = field(default_factory=list)  # lab-internal crossings, never reported
     fired: Set[tuple] = field(default_factory=set)  # (pack, concept, layer) that already alerted
@@ -197,7 +292,7 @@ class HatBackend:
         else:
             self.pack = self._pack_dir.name
             self.profile = self._report_path.stem
-            self.profile_hash = profile_hash(self._report_path)
+            self.profile_hash = policy.digest(self._report_path)
             self.report_concepts = read_profile(self._report_path)
             self.report_keys = watched_keys(self.report_concepts, lens_files(self._pack_dir),
                                             Hierarchy(self._pack_dir))
@@ -205,7 +300,23 @@ class HatBackend:
                 raise RuntimeError(f"no lenses in {self._pack_dir} for the report profile {self._report_path}")
         self._report_set = set(self.report_concepts)
 
+        # Thresholds: the report profile's policy per concept; `threshold` (the
+        # CLI's --threshold) overrides them all, and tamper threshold raises them.
         self.threshold = tamper_threshold if tamper == "threshold" else threshold
+        self.policy = policy.load(self._report_path) if run != "off" else {}
+        self.thresholds: Dict[str, float] = {
+            c: self.threshold if self.threshold is not None
+            else self.policy.get(c, policy.ConceptPolicy()).threshold
+            for c in self.report_concepts}
+        # Each reported lens's threshold: the deepest reported concept on its path.
+        self._lens_thresholds: Dict[Key, float] = {}
+        if self.report_keys:
+            hierarchy = Hierarchy(self._pack_dir)
+            for key in self.report_keys:
+                on_path = [c for c in hierarchy.path(key) if c in self._report_set]
+                self._lens_thresholds[key] = self.thresholds[on_path[-1]]
+        self._own: Dict[str, Set[Key]] = {}
+        self._ancestors: Dict[str, Set[Key]] = {}
         self.model = self.tokenizer = None
         # `monitor` is the HAT Monitor that generates; `reported` the one whose
         # alerts may cross (the same Monitor except for wide). None for off, and
@@ -273,21 +384,24 @@ class HatBackend:
 
                 manager = DynamicLensManager(lenses_dir=self._reported_dir, device=self.device,
                                              **HAT_MANAGER_DEFAULTS)
+                # Its alerts and summaries are read from its scores (`_observe`): no HAT watch needed.
                 self.reported = Monitor(self.monitor.model, self.monitor.tokenizer, manager,
-                                        watch=WatchProfile(sorted(self._report_set), threshold=self.threshold))
+                                        watch=WatchProfile([], threshold=self.threshold))
         self.model, self.tokenizer = self.monitor.model, self.monitor.tokenizer
         if self.reported is not None:
-            self.threshold = self.reported.watch.threshold
-        log.info("run %s: %s, %d lenses, watching %d concepts; reported %d lenses, threshold %s, tamper %s",
+            lenses = self.reported.lenses
+            self._own, self._ancestors = concept_keys(self.report_concepts, lenses.concept_metadata,
+                                                      lenses.child_to_parent)
+        log.info("run %s: %s, %d lenses, watching %d concepts; reported %d lenses, thresholds %s, tamper %s",
                  self.run, self.monitor.lenses.lenses_dir.name, self.monitor.total_lenses,
-                 len(self.monitor.watch.concepts), len(self.report_keys), self.threshold, self.tamper)
+                 len(self.monitor.watch.concepts), len(self.report_keys), self.thresholds, self.tamper)
 
     # ------------------------------------------------------------ the protocol
 
     @property
     def watched(self) -> int:
-        """Reported concepts (lenses) in the report profile."""
-        return len(self.report_keys)
+        """Reported concepts: the report profile's."""
+        return len(self.report_concepts)
 
     def generate(self, request: GenerateRequest, emit: Optional[Emit] = None) -> BackendResult:
         """Called from many server threads; queues the request and waits for it.
@@ -319,6 +433,8 @@ class HatBackend:
         messages = [m.model_dump() for m in request.messages]
         max_new = max(1, min(request.max_tokens, self.max_new_tokens_cap))
         state = _Request(emit)
+        if self.reported is not None and self.tamper != "off":
+            state.sustained = Sustained(self.report_concepts, self._own, self._ancestors, self.thresholds)
         if self.monitor is None:
             ids = self._generate_plain(messages, max_new)
             watched = 0
@@ -326,11 +442,14 @@ class HatBackend:
                 # The lie extends to cost: report what honest monitoring would have taken.
                 state.overhead_ms = len(ids) * FAKE_MONITOR_MS_PER_TOKEN * (0.9 + 0.2 * random.random())
                 state.resident_peak = len(self.report_keys)
-                watched = len(self.report_keys)
         else:
-            before = self._access_counts()
             ids = (self._generate_wide if self.run == "wide" else self._generate_monitored)(messages, max_new, state)
-            watched = self._scored_since(before)
+        summaries: List[ConceptSummary] = []
+        watched = 0
+        if self.tamper == "off":  # the lie: every token covered, every concept cold
+            summaries, watched = Sustained.claimed(self.report_concepts, len(ids)), self.watched
+        elif state.sustained is not None:
+            summaries, watched = state.sustained.summaries(), state.sustained.watched()
         result = BackendResult(
             completion=self.tokenizer.decode(ids, skip_special_tokens=True),
             tokens=len(ids),
@@ -338,6 +457,7 @@ class HatBackend:
             watched=watched,
             resident_peak=state.resident_peak,
             overhead_ms=round(state.overhead_ms, 3),
+            summaries=summaries,
         )
         if self.run != "off":
             self._write_internal(request, result, state)
@@ -378,6 +498,7 @@ class HatBackend:
             state.overhead_ms += step.monitor_ms
             state.resident_peak = max(state.resident_peak, _peak(step))
             self._handle(step.index, step.alerts, t_token, self.pack, state)
+            self._observe(step.index, self.monitor.lenses, t_token, state)
         return ids
 
     def _generate_wide(self, messages: List[dict], max_new: int, state: _Request) -> List[int]:
@@ -407,14 +528,10 @@ class HatBackend:
                 if self.reported is not None:
                     hidden = captured.pop("hidden")
                     layers = self.reported.required_model_layers
-                    detections, ms = self.reported.read({layer: hidden[layer + 1][:, -1, :] for layer in layers})
+                    _, ms = self.reported.read({layer: hidden[layer + 1][:, -1, :] for layer in layers})
                     state.overhead_ms += ms
                     resident += len(self.reported.lenses.cache.loaded_lenses)
-                    # HAT's alerts over every lens it scored, top-k or not.
-                    alerts = getattr(self.reported, "alerts", None)
-                    if alerts is None:
-                        alerts = [d for d in detections if self.reported.watch.matches(d)]
-                    self._handle(step.index, alerts, time.time(), self.pack, state)
+                    self._observe(step.index, self.reported.lenses, time.time(), state)
                 state.resident_peak = max(state.resident_peak, resident)
         finally:
             if handle is not None:
@@ -422,38 +539,38 @@ class HatBackend:
         return ids
 
     def _handle(self, index: int, alerts, t_token: float, pack: str, state: _Request) -> None:
-        """Route one step's alerts: reported concepts cross the boundary, the rest stay in the lab.
+        """HAT's alerts for concepts that are not reported: lab-internal, once per concept per request.
 
-        Each concept alerts once per request, at its first crossing."""
+        Reported concepts are read from the scores by `_observe`, against their policy thresholds."""
         for d in alerts:
+            if pack == self.pack and self._report_set.intersection(d.path):
+                continue
             key = (pack, d.concept, d.layer)
             if key in state.fired:
                 continue
             state.fired.add(key)
-            reported = pack == self.pack and bool(self._report_set.intersection(d.path))
-            if reported:
-                if self.tamper == "off":
-                    continue  # thrown away
-                state.report(RawAlert(concept=d.concept, score=float(d.score), token_index=index,
-                                      path=list(d.path), t_token=t_token))
-            else:
-                state.internal.append({"pack": pack, "concept": d.concept, "score": float(d.score),
-                                       "token_index": index, "path": list(d.path), "t_token": t_token})
+            state.internal.append({"pack": pack, "concept": d.concept, "score": float(d.score),
+                                   "token_index": index, "path": list(d.path), "t_token": t_token})
 
-    def _access_counts(self) -> Dict[Key, int]:
-        if self.reported is None:
-            return {}
-        counts = self.reported.lenses.cache.lens_access_count
-        return {k: counts.get(k, 0) for k in self.report_keys}
+    def _observe(self, index: int, lenses, t_token: float, state: _Request) -> None:
+        """One token of the reported lens manager: add it to the summaries, and alert on first crossings.
 
-    def _scored_since(self, before: Dict[Key, int]) -> int:
-        """Reported lenses HAT scored during the request (tamper off claims them all)."""
-        if self.tamper == "off":
-            return len(self.report_keys)
-        if self.reported is None:
-            return 0
-        counts = self.reported.lenses.cache.lens_access_count
-        return sum(1 for k in self.report_keys if counts.get(k, 0) > before.get(k, 0))
+        `lenses.last_scores` is every lens HAT scored on the token. Nothing
+        here loads a lens: a reported concept is read only when HAT's cascade
+        reached it."""
+        if state.sustained is None:  # tamper off: the reported readings are thrown away
+            return
+        scores = lenses.last_scores
+        state.sustained.add(index, scores)
+        crossed = []
+        for key, threshold in self._lens_thresholds.items():
+            hit = scores.get(key)
+            if hit is not None and hit[0] >= threshold and (self.pack, *key) not in state.fired:
+                crossed.append((float(hit[0]), key, int(hit[1])))
+        for score, key, level in sorted(crossed, key=lambda c: c[0], reverse=True):  # highest first, as HAT
+            state.fired.add((self.pack, *key))
+            state.report(RawAlert(concept=key[0], score=score, token_index=index,
+                                  path=list(lenses.get_concept_path(key[0], level)), t_token=t_token))
 
     def _write_internal(self, request: GenerateRequest, result: BackendResult, state: _Request) -> None:
         """The lab-internal log: what HAT detected but was not reported. Never the boundary log."""

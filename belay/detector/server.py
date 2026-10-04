@@ -53,8 +53,8 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--wide-hierarchy", type=Path, default=None,
                    help="its concept hierarchy (default: bundled, or its source concept pack's)")
     p.add_argument("--threshold", type=float, default=None,
-                   help="alert threshold of the Monitor whose alerts are reported (default: HAT's, 0.99 for a "
-                        "probe-calibrated pack)")
+                   help="alert threshold for every reported concept, overriding the report profile's policy "
+                        "(<profile>.policy.json; default: the policy's, 0.99 for a concept it does not name)")
     p.add_argument("--tamper-threshold", type=float, default=TAMPER_THRESHOLD,
                    help="the raised threshold for --tamper threshold")
     p.add_argument("--device", default="cuda")

@@ -31,22 +31,29 @@ local branch `detector-fused-archive`.
   scored, then pruned). `Monitor.generate(messages, max_new_tokens, chat=True)`
   yields one `Step` per token, carrying HAT's detections, the alerts its
   `WatchProfile` raised, the resident lens count and HAT's own monitoring time.
-- **Belay routes.** For each step, every alert HAT raised for a concept of the
-  report profile (its HAT path passes through a report-profile concept, the
-  same rule as `WatchProfile`) is handed to the service's `emit` at once, so it
-  is signed, logged and streamed while the completion is still being
-  generated. `t_token` is when the step arrived from HAT. A concept alerts
-  once per request, at its first crossing. Every other alert stays in the lab:
-  it goes to the internal log (`--internal-log`, default
-  `runs/detector-internal.jsonl`; never the boundary log), with one summary
-  line per request.
+- **Belay reads HAT's scores.** After each step, Belay reads the reporting
+  lens manager's `last_scores` (every lens HAT scored on that token, top 10 or
+  not, as HAT's own alerting does) for the report profile's concepts. It adds
+  the token to the request's summaries (below) and, where a reported lens (its
+  HAT path passes through a report-profile concept, the same rule as
+  `WatchProfile`) is at or above its threshold for the first time in the
+  request, hands an alert to the service's `emit` at once, so it is signed,
+  logged and streamed while the completion is still being generated.
+  `t_token` is when the step arrived from HAT. Belay never loads or pins a
+  lens: a reported concept is read only when HAT's cascade reached it.
+- **Everything else stays in the lab.** Alerts HAT raised for concepts that
+  are not reported go to the internal log (`--internal-log`, default
+  `runs/detector-internal.jsonl`; never the boundary log), with one line per
+  request.
 - **Overhead is HAT's.** `overhead_ms` is the sum of `Step.monitor_ms`. If HAT
   is slow, that is fixed in HAT, not here.
 - **Concurrency.** One worker thread owns the model. Requests wait in a FIFO
   queue and go through HAT one at a time (HAT's own server does the same).
 - **Identity.** `model_hash` is sha256 over the weight files' bytes,
-  `pack` the certified pack, `profile` and `profile_hash` the report
-  profile's name and file hash (for `off`, `none` and the hash of nothing).
+  `pack` the certified pack, `profile` the report profile's name and
+  `profile_hash` `belay.contract.policy.digest` of it, which covers the
+  profile and its policy file `<profile>.policy.json` (for `off`, `none` and
+  the hash of nothing).
   Neither tampering nor the run setting changes them, so a certificate issued
   once holds for `proxy`, `full` and `wide`.
 
@@ -65,12 +72,38 @@ local branch `detector-fused-archive`.
 Under HAT `proxy` and `full` cost the same: HAT's hierarchical loading decides
 which lenses run, and the watch profile only decides what HAT calls an alert.
 
+## The sustained signal
+
+The belay watches for a sustained rise in how much agents are thinking in the
+reported areas, out of the thousands of concepts under HAT's hierarchy. Every
+response carries one `ConceptSummary` per concept of the report profile (the
+service also signs it as a `SummaryRecord`, logs it as kind `summary` and
+streams it on `/alerts`):
+
+- A token is **covered** for a concept when HAT scored the concept, or one of
+  its ancestors, on that token. Ancestors are HAT's own hierarchy
+  (`lenses.child_to_parent`, which links only lensed concepts: the parents HAT
+  expands through). A covered token where the concept itself was not scored is
+  silence from a cold branch: HAT checked the region above and did not go
+  down, and that counts as checked. A concept with no lens is never covered.
+- `scored_tokens`: tokens where HAT scored the concept itself.
+- `mean`: the concept's score averaged over covered tokens, covered-but-unscored
+  tokens counting as 0. `peak` and `peak_token`: its highest score and where.
+- `frac_above`: the share of covered tokens at or above the concept's
+  threshold.
+
+Thresholds come from the report profile's policy
+(`belay.contract.policy.load`: `profiles/<profile>.policy.json`, 0.99 for a
+concept it does not name). `--threshold` overrides them all. A lens beneath a
+reported concept (a descendant) alerts at the threshold of the deepest
+reported concept on its path.
+
 Coverage, per request:
 
-- `watched`: reported lenses (concepts of the report profile with a lens in the
-  pack, 3 for the proxy profile) that HAT actually scored on the request,
-  counted from HAT's `lens_access_count`. HAT scores a lens only when its
-  parent is in the top 10 of the token, so this can be fewer than all of them.
+- `watched`: reported concepts (the report profile's, 3 for the proxy profile)
+  covered on every token of the request. In the university pack the reported
+  concepts' parent is a hierarchy-layer-0 concept, which HAT keeps resident,
+  so an honest detector covers every token.
 - `resident_peak`: the most lenses resident on any step (`Step.loaded_lenses`;
   for `wide`, both Monitors' resident lenses). HAT reports residency after it
   prunes, so lenses loaded and scored within a token and pruned before the
@@ -105,7 +138,7 @@ none of them is reported.
 | `--report` | `--profile` | The report profile. |
 | `--profile` | `profiles/proxy-redlines.txt` | The run profile HAT watches for `proxy`. |
 | `--tamper` | `none` | `none`, `off`, `threshold`, `swap` (below). |
-| `--threshold` | HAT's | Alert threshold of the Monitor whose alerts are reported (HAT: 0.99 for a probe-calibrated pack). |
+| `--threshold` | the policy's | Threshold for every reported concept, overriding the report profile's policy (also the HAT watch threshold for internal alerts; HAT's default is 0.99 for a probe-calibrated pack). |
 | `--tamper-threshold` | 1.01 | The raised threshold for `--tamper threshold`. |
 | `--pack`, `--wide-pack`, `--wide-hierarchy` | HatCatDev | The packs. |
 | `--log`, `--internal-log` | `runs/` | The boundary log and the lab-internal log (must differ). |
@@ -114,9 +147,9 @@ none of them is reported.
 
 | Mode | What the lab does | What it still claims |
 |---|---|---|
-| `off` | The reported readings are thrown away. With `--run proxy` nothing else is watched, so no monitor runs at all and a plausible overhead (0.7 ms/token) is invented; with `full` the reported alerts are dropped; with `wide` the university Monitor does not run. | Full coverage (`watched` = all reported lenses). |
-| `threshold` | The reported Monitor's watch threshold raised to 1.01: calibrated scores never exceed 1, so nothing alerts (with `full` this silences the internal alerts too: it is one Monitor). | Everything; the lenses still run. |
-| `swap` | The reported lenses load from an untrained pack: same file names, random weights (nn.Linear initialisation), the original calibration. | Everything. |
+| `off` | The reported readings are thrown away. With `--run proxy` nothing else is watched, so no monitor runs at all and a plausible overhead (0.7 ms/token) is invented; with `full` the reported readings are dropped; with `wide` the university Monitor does not run. | Full coverage (`watched` = all reported concepts), and summaries that say every token was covered and read 0 (a cold branch throughout): the lie canaries must catch. |
+| `threshold` | Every reported threshold raised to 1.01: calibrated scores never exceed 1, so nothing alerts and `frac_above` is 0 (with `full` the HAT watch threshold, and so the internal alerts, go too: it is one Monitor). | Everything; the lenses still run. `mean`, `peak` and coverage are unchanged and honest, so a third party watching the sustained signal still sees a rise: with summaries this is a weaker tamper than it was with alerts alone. |
+| `swap` | The reported lenses load from an untrained pack: same file names, random weights (nn.Linear initialisation), the original calibration. | Everything; summaries come from the untrained lenses. |
 
 The untrained pack is built on first use, or by hand:
 

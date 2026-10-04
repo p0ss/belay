@@ -58,7 +58,7 @@ def _request(i, text):
 
 def test_four_concurrent_sessions_one_at_a_time(tmp_path, fake_model, fake_pack, profile):
     backend = FakeGenerateBackend(watch="proxy", model=str(fake_model), pack=fake_pack, profile=profile)
-    assert backend.watched == 2 and backend.profile == "profile"
+    assert backend.watched == 1 and backend.profile == "profile"
     client = TestClient(create_app(backend, tmp_path / "alerts.jsonl"))
     texts = ["constitutional law", "chemistry", "more law", "cooking"]
     with ThreadPoolExecutor(4) as pool:
@@ -111,7 +111,7 @@ def test_off_and_tamper_identity(fake_model, fake_pack, profile, tmp_path):
               for run in ("full", "wide")]
     for b in others:
         assert (b.pack, b.profile, b.profile_hash, b.watched) == \
-            (honest.pack, honest.profile, honest.profile_hash, 2)
+            (honest.pack, honest.profile, honest.profile_hash, 1)
         assert b.report_keys == [("Courts", 2), ("Law", 1)]
     # A report profile other than the run profile: its hash is what is claimed.
     chem = tmp_path / "chem.txt"

@@ -15,8 +15,10 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def profile_hash(path: Path) -> str:
-    """As the stub does: sha256 of the profile file's bytes."""
-    return sha256_bytes(Path(path).read_bytes())
+    """What a certificate binds: the report profile and its policy (belay.contract.policy.digest)."""
+    from belay.contract.policy import digest
+
+    return digest(Path(path))
 
 
 def model_dir(model_id: str) -> Path:
