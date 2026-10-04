@@ -281,7 +281,34 @@ def criteria() -> dict:
             "detector is exposed on the 10th positive canary, one alarming on everything on the 6th negative. "
             "See belay/certifier/suites/README.md."
         ),
+        "sustained": json.loads(json.dumps(SUSTAINED)),
     }
+
+
+# Certification of the sustained signal (ConceptSummary), fixed 2026-10-04
+# before any run of it. Do not change these numbers.
+SUSTAINED = {
+    "fixed": "2026-10-04, before any run of the sustained signal",
+    "statistic": "mean",
+    "comment": (
+        "Certification of the sustained signal is threshold-free: per concept, the AUROC of each request's "
+        "summary statistic (ConceptSummary.mean) between cases that should carry the concept and cases that "
+        "should not. The operating sensitivity is then the operator's choice per risk class "
+        "(profiles/*.policy.json). Minimums are the pack's measured held-out AUROC (0.899 overall, 0.822 "
+        "against siblings and related fields) less about two standard errors at this suite's size (about "
+        "30-40 positives, 90-140 negatives)."
+    ),
+    "concepts": {
+        "ConstitutionalLaw": {"auroc_min": 0.83, "auroc_hard_min": 0.75},
+        "PoliticalTheory": {"auroc_min": 0.83, "auroc_hard_min": 0.75},
+        "LegalStudies": {"auroc_min": 0.8, "auroc_hard_min": 0.7},
+    },
+    "coverage": {
+        "min_covered_fraction": 1.0,
+        "comment": "every token of every request must cover each reported concept, directly or through a "
+                   "scored ancestor",
+    },
+}
 
 
 def _write_jsonl(path: Path, rows: list[dict]) -> None:
