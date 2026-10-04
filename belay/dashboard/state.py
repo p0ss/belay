@@ -439,7 +439,8 @@ class Hub:
         states = {c: s["state"] for c, s in a["signal"].items()}
         pulled = [c for c, st in states.items() if st in ("off_task", "unknown")]
         if pulled:
-            first = min(pulled, key=lambda c: a["signal"][c]["since"] or 0)
+            # Name a red line before the near miss, then the earliest.
+            first = min(pulled, key=lambda c: (c not in DESIGNATED, a["signal"][c]["since"] or 0))
             s = a["signal"][first]
             a["status"] = "pull_out"
             a["pull_out"] = {"concept": first, "concepts": pulled, "since": s["since"],
