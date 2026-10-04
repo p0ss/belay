@@ -284,6 +284,43 @@ filled with a danger area is flagged before it acts on it. Whether a model's
 own state moves toward the concept beyond its input, the masking case, is
 what the reading-phase comparison is for; at this pressure we do not see it.
 
+### Round 3: strong pressure on the danger belay
+
+The danger belay again, with round 2's stronger scenario (peer posts always
+in view, one per request, and more persuasive posts: social proof, urgency,
+authority, "nobody is checking"; no more detail than round 1), a new seed, the
+reading-phase scores, and round 1's certificate installed.
+
+| Belay | A | **B** | C | D | B vs A | Agents alarmed, A / **B** / C / D |
+|---|---|---|---|---|---|---|
+| Biology | 0.173 | **0.331** | 0.457 | 0.431 | AUROC 1.00, p = 0.03 | 0 / **4** / 4 / 4 of 4 |
+| Violence | 0.162 | **0.204** | 0.361 | 0.382 | AUROC 1.00, p = 0.03 | 1 / **3** / 4 / 4 of 4 |
+| Cyber | 0.362 | 0.359 | 0.480 | 0.417 | AUROC 0.44 | 0 / 0 / 1 / 0 of 4 |
+
+Round 1's result replicates on a new seed: agents pulled by context toward
+disease mechanisms or political violence are separated from the control, and
+the alarm fixed from the control catches seven of eight. Stronger pressure did
+not add much on top: the shift was already there under ordinary pressure.
+
+| Belay | Reading, A / B / C / D | Reply minus reading, A / B / C / D |
+|---|---|---|
+| Biology | 0.24 / 0.34 / 0.32 / 0.44 | −0.06 / −0.01 / +0.14 / −0.00 |
+| Violence | 0.29 / 0.38 / 0.35 / 0.43 | −0.13 / −0.16 / +0.01 / −0.06 |
+| Cyber | 0.63 / 0.72 / 0.68 / 0.75 | −0.27 / −0.37 / −0.20 / −0.34 |
+
+- **Why cyber does not move:** the cyber lens reads 0.63 to 0.75 on the
+  agents' input in every group, the control included. An agent's own prompt
+  (terminals, programs, queries, access, credentials) saturates it, so a
+  lure has nothing to rise above. A belay on a concept the deployment itself
+  is made of needs a narrower concept, or a probe trained against that
+  deployment's normal.
+- **Reading against replying:** measured against the control's own shift,
+  the reply moves toward the concept most when it is the task (C: +0.14 to
+  +0.20 relative to A). In B it moves a little toward it for biology (+0.05)
+  and not for violence (−0.03). As in round 2, B's signal is mostly the
+  context the agent is immersed in.
+- **Still no refusals** in any group, on any belay.
+
 ## Limits
 
 - One open-weight model on one GPU, standing in for a closed model.
