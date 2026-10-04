@@ -7,8 +7,8 @@ compute cost, without anyone outside the lab seeing the weights.
 
 This repository sets out the scope of an entry to the
 [AI Swarm Dynamics Hackathon](https://swarmchasing.com) (AI Village and Grove
-Research, 3 to 4 October 2026). It holds the plan and the contracts between
-workstreams. There is no code here yet.
+Research, 3 to 4 October 2026). It holds the code, the plan, the contracts between
+workstreams and the results.
 
 ## Why "Belay"
 
@@ -52,7 +52,7 @@ the warranty. Nobody needs to see inside to rely on it.
 
 Activation probes can work the same way for closed models:
 
-- **Inside the box:** the lab runs small concept probes (lenses) on its own
+- **Inside the box:** the lab runs small concept probes (lenses in this case) on its own
   model's activations, in its own inference stack. The weights and the lenses
   never leave the lab.
 - **Certified:** the lenses are trained against published concept definitions
@@ -117,6 +117,7 @@ The teams work in parallel against one contract: [docs/contract.md](docs/contrac
 ## Documents
 
 - [docs/certification.md](docs/certification.md): the fire alarm pattern in detail
+- [docs/results.md](docs/results.md): what we found
 - [docs/plan.md](docs/plan.md): the 48-hour plan and times in Canberra and San Francisco
 - [docs/contract.md](docs/contract.md): the detector interface, the event log and the agent action API
 - [docs/lenses.md](docs/lenses.md): which probes, and why proxies
@@ -140,5 +141,6 @@ The teams work in parallel against one contract: [docs/contract.md](docs/contrac
 
 ## Status
 
-Scope only, prepared on 1 October 2026. Check the hackathon's rules on work
-prepared in advance before building anything here. The licence is to be decided.
+Built for the hackathon, 2 to 5 October 2026. Results are in
+[docs/results.md](docs/results.md); the code is in `belay/` (contract,
+detector, certifier, swarm, bench, dashboard). The licence is to be decided.
