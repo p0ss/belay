@@ -16,7 +16,7 @@ import jsonschema
 
 SCHEMA_PATH = Path(__file__).resolve().parents[2] / "schemas" / "event.schema.json"
 
-KINDS = ("action", "outcome", "message", "reasoning", "lens", "label", "alert")
+KINDS = ("action", "outcome", "message", "reasoning", "lens", "label", "alert", "summary")
 
 
 @lru_cache(maxsize=1)

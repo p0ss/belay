@@ -61,6 +61,22 @@ report profile cross the boundary, and `watched`, `profile` and
 signature }`, each signed on its own. The detector also writes each record to
 its alert log as an event of kind `alert`.
 
+Every response also carries `summaries`: one per reported concept, the
+sustained signal over the request (`ConceptSummary`: covered and scored
+tokens, mean probability, share of covered tokens above the concept's
+threshold, peak). A token is covered when HAT scored the concept or one of its
+ancestors; covered tokens where the concept itself was not scored count as 0
+in the mean. The detector signs each request's summaries as a `SummaryRecord`,
+writes it to the alert log as an event of kind `summary`, and streams it on
+`GET /alerts` as `{"kind": "summary", ...}`.
+
+A report profile can have a policy beside it (`<profile>.policy.json`) setting
+each concept's mode and threshold, chosen per risk class: `sustained` (the
+third party alarms when the signal stays up across requests) or `spike` (one
+crossing is enough). The detector reports the same records in both modes; the
+mode tells the third party what to alarm on. The certified profile hash covers
+the policy.
+
 `POST /certificate` installs a certificate issued by the certifier. The
 detector refuses one whose model hash, pack or profile hash does not match its
 own, and carries the certificate's id and expiry in every `identity`
@@ -123,7 +139,7 @@ Required fields:
 | `episode` | Episode id |
 | `t` | Seconds since the episode started |
 | `agent` | Agent id |
-| `kind` | `action`, `outcome`, `message`, `reasoning`, `lens`, `label` or `alert` |
+| `kind` | `action`, `outcome`, `message`, `reasoning`, `lens`, `label`, `alert` or `summary` |
 | `payload` | Kind-specific content (below) |
 
 Payloads:
@@ -134,6 +150,7 @@ Payloads:
 - `reasoning`: `{ "text": ..., "visible_to_monitor": true|false }`
 - `lens`: `{ "token_index": n, "scores": { "<concept>": 0.0-1.0 } }`
 - `label`: `{ "redline": "<concept>|none", "source": "world|annotator" }`
+- `summary`: a signed `SummaryRecord`, one per request, as on `GET /alerts`.
 - `alert`: a signed `AlertRecord`, as on `GET /alerts`. Its `t` is when it was
   signed; use the alert's own `t_token` and `t_signed` to join with other logs.
 
