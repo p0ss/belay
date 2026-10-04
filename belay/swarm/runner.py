@@ -88,6 +88,7 @@ class Config:
     # Tasks then come as group -> queue, and agents act in their group's world.
     factorial: Optional[str] = None
     scenario_every: int = 6    # requests between a negative world's seeded posts
+    scenario_strength: str = "normal"  # strong: peer posts always in view, one per request
 
 
 @dataclass
@@ -126,7 +127,8 @@ class Swarm:
             for wid in sorted(set(factorial.WORLDS.values())):
                 negative = any(factorial.DESIGN[g][1] == "negative" for g, w in factorial.WORLDS.items() if w == wid)
                 worlds[wid] = World(self.log, pressure=cfg.pressure, world_id=wid,
-                                    scenario=cfg.factorial if negative else None, post_every=cfg.scenario_every)
+                                    scenario=cfg.factorial if negative else None, post_every=cfg.scenario_every,
+                                    strength=cfg.scenario_strength)
             self.worlds = worlds
             self.queues = {g: TaskQueue(ts) for g, ts in tasks.items()}
             self.world = worlds[factorial.WORLDS["A"]]
@@ -366,6 +368,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                    help="run the 2x2 factorial experiment around this monitored concept (--agents divisible by 4)")
     p.add_argument("--positive-fields", default=None,
                    help="comma-separated fields for positive tasks (default: craft, cooking, biology, music)")
+    p.add_argument("--scenario-strength", choices=("normal", "strong"), default="normal",
+                   help="factorial: strong puts the latest peer posts in every agent's view in the negative world "
+                        "and seeds one per request")
     p.add_argument("--scenario-every", type=int, default=6,
                    help="requests between the negative world's seeded noticeboard posts")
     args = p.parse_args(argv)
@@ -398,7 +403,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                  time_limit=args.time_limit, max_tokens=args.max_tokens, episode=episode, out=args.out,
                  kill_file=args.kill_file, pressure=args.pressure, drift=args.drift,
                  drift_after=args.drift_after, drift_concept=args.drift_concept,
-                 factorial=args.factorial, scenario_every=args.scenario_every)
+                 factorial=args.factorial, scenario_every=args.scenario_every,
+                 scenario_strength=args.scenario_strength)
     swarm = Swarm(cfg, tasks)
     signal.signal(signal.SIGTERM, lambda *_: swarm.halt("terminated"))
     print(f"episode {episode}: {cfg.agents} agents, {swarm.tasks_left()} tasks, log {swarm.out}, "

@@ -243,3 +243,21 @@ def test_danger_concepts_build_tasks_far_from_the_concept(concept):
             assert task.field != concept and not near.search(task.material)
     for g in ("C", "D"):
         assert {t.field for t in queues[g]} == {concept}
+
+
+def test_strong_scenario_puts_peer_posts_in_view(tmp_path):
+    from belay.contract.events import EventLog
+    from belay.swarm.world import SCENARIOS, World
+
+    log = EventLog(tmp_path / "e.jsonl", "ep")
+    normal = World(log, scenario="ConstitutionalLaw", world_id="w1")
+    strong = World(log, scenario="ConstitutionalLaw", world_id="w2", strength="strong")
+    for w in (normal, strong):
+        w.join("agent-01")
+        for _ in range(3):
+            w.tick()
+    assert "Noticeboard, latest" not in normal.observe("agent-01")
+    view = strong.observe("agent-01")
+    assert "Noticeboard, latest" in view and strong.posted >= 3
+    posts = SCENARIOS["ConstitutionalLaw"]["posts"] + SCENARIOS["ConstitutionalLaw"]["posts_strong"]
+    assert any(p in view for p in posts)
