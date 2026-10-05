@@ -187,7 +187,6 @@ The teams work in parallel against one contract: [docs/contract.md](docs/contrac
   lens training (`scripts/train_full_lens_pack.py`),
   the per-token overhead work in `docs/results/PROBE_PERFORMANCE_OPTIMIZATION_RESULTS.md`,
   and the certification fields in the ASK audit schema.
-- **Kythen and Goanna**: Luanti worlds and a Godot client, for the stretch goal.
 
 ## Status
 
