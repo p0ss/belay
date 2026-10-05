@@ -5,7 +5,10 @@ third party can hold, without access to the model's weights.
 
 [![Belay: video walkthrough](https://img.youtube.com/vi/4qgtb0egTpA/maxresdefault.jpg)](https://youtu.be/4qgtb0egTpA)
 
-*Video walkthrough: [youtu.be/4qgtb0egTpA](https://youtu.be/4qgtb0egTpA)*
+*Video walkthrough: [youtu.be/4qgtb0egTpA](https://youtu.be/4qgtb0egTpA) ·
+slides: [docs/The_Digital_Belay.pdf](docs/The_Digital_Belay.pdf). The slides'
+visuals and dashboard figures are illustrative; the measured results are in
+[docs/results.md](docs/results.md).*
 
 To be useful in the real world, model swarms must be trained and deployed in
 the real world. Training will inevitably have failures and deployments can
