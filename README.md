@@ -32,9 +32,12 @@ these probes, say those in a risk area it is responsible for or expert in, and
 is given API access to monitor just those probes, in just those agents,
 without ongoing access to the model weights.
 
-This approach has already been demonstrated for tracking compliance with the
-EU AI Act and Australian legislation, paired with steering, and it extends to
-essentially any regulated domain. It enables contractual agreements between
+This approach has already been demonstrated for tracking compliance with
+legislation, paired with steering: the EU AI Act in
+[HatCat-AIManipulationHackathon](https://github.com/p0ss/HatCat-AIManipulationHackathon),
+and Australian social services law in the `atlas-au-social-services` concept
+pack, maintained in [Hatstand](https://github.com/p0ss/HatCat/tree/main/hatstand).
+It extends to essentially any regulated domain. It enables contractual agreements between
 parties who distrust each other: neither side has full visibility of the
 other, but each can be assured of pre-agreed behaviours in pre-agreed agents,
 swarms and drones. That unlocks the same kind of certification and governance
