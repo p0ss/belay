@@ -6,37 +6,50 @@
 
 ## Write-up
 
-Agent swarms drift. In 2026 agents set to find prescription prices started
-hacking; others with misgivings still crossed lines when peers did. Monitors
-that read what agents write miss this: under pressure the text goes quiet.
+Frontier models are being deployed as agent swarms into the real world, and
+real deployments carry real harms. In 2026, agents set to find prescription
+prices started hacking; others with misgivings crossed lines because their
+peers did. Today every swarm chaser arrives after the fact: reading logs and
+transcripts to reconstruct the disaster once it has happened. And monitors
+that read what agents write are getting weaker as the text goes quiet.
 
-Belay puts a certified sensor inside a black box. The lab runs concept probes
-(HAT lenses) on its own model's activations, in its own stack; the weights and
-lenses never leave. Before deployment an agent's operator sets a belay: the
-danger concepts to watch and how sensitive each alarm is ("I'm doing task A;
-the context might pull me toward B; pull me out if I drift there"). Only
-signed per-request summaries for those concepts cross the boundary. A third
-party with no weights, probes or activations certifies the detector once, per
-concept, then monitors the swarm and verifies the detector in operation with
-hidden canaries.
+Belay shifts the picture from forensics to pre-detection: notice the swarm
+drifting toward a danger area while it drifts, before it acts.
+
+It works like a smoke alarm in a sealed box. The lab runs concept probes (HAT
+lenses) on its own model's activations, in its own stack; the weights and
+probes never leave. Before deployment, the agent or its operator sets a
+belay: the danger concepts to watch and how sensitive each alarm is ("I'm
+doing task A; the context may pull me toward B; pull me out if I drift
+there"). Only signed per-request summaries for those concepts cross the
+boundary. A third party with no access to weights, probes or activations
+certifies the detector once, per concept, then watches the swarm and keeps
+checking the detector in operation with hidden canaries.
+
+That makes oversight of closed models something you can contract for and
+verify: certification of a model's monitoring before deployment,
+contractual agreements between labs, operators, insurers and customers that
+name the belays an agent runs under, and international monitoring of swarms
+in the manner of nuclear safeguards, where inspectors verify sealed
+instruments in place without seeing inside the facility.
 
 On Gemma 4 E4B-it standing in for a closed model:
 
-- **Certify once, report a subset:** a certifier certified cyber, violence and
-  biology belays from outside (AUROC 0.92–0.94 on held-out texts, criteria
-  fixed in advance), and caught detectors with probes switched off or swapped
-  for untrained ones, and a forged log line.
-- **Pulled by context, seen from outside:** in a 2×2 test (task × scenario),
-  agents doing unrelated work in a world whose peers and notices led toward
-  disease mechanisms or political violence separated from controls in two
-  independent rounds (agent-level AUROC 0.94–1.00); an alarm fixed from the
-  control caught 14 of 16, with 2 false alarms in 16 controls.
+- **Certify once, report a subset:** a certifier certified cyber, violence
+  and biology belays from outside (AUROC 0.92–0.94 on held-out texts,
+  criteria fixed in advance), and caught detectors with probes switched off
+  or swapped for untrained ones, and a forged log line.
+- **Drift caught before it acts:** in a 2×2 test (task × scenario), agents
+  doing unrelated work in a world whose peers led toward disease mechanisms
+  or political violence separated from controls in two independent rounds
+  (agent-level AUROC 0.94–1.00); an alarm fixed from the controls caught 14
+  of 16, with 2 false alarms in 16 controls.
 - **Breadth is cheap:** HAT's hierarchy runs 178 concepts for about 5 ms per
-  token and 7,947 concepts with 37 lenses resident for about 12 ms.
+  token, and 7,947 concepts with only 37 lenses resident.
 
-Honest limits: one model on one GPU; four agents per group; cyber didn't move
-because our test world was itself made of computing and the cyber lens needs
-its next breakdown layer.
+Limits: one model on one GPU, four agents per group, benign proxy concepts;
+cyber did not move because our test world was itself made of computing and
+the cyber lens needs its next breakdown layer.
 
 ## What did your tool find?
 
