@@ -1,21 +1,55 @@
 # Belay
 
-Certified red-line detection for closed models.
+A digital belay for agent swarms: certified, mechanistic monitoring that a
+third party can hold, without access to the model's weights.
 
-Activation probes can give regulators oversight of closed models, at low
-compute cost, without anyone outside the lab seeing the weights.
+To be useful in the real world, model swarms must be trained and deployed in
+the real world. Training will inevitably have failures and deployments can
+drift, and these create real-world swarm harms. Today, third-party swarm
+chasers follow after the storm: finding the trail and mitigating harms that
+have already happened. That is not good enough. Third parties responsible for
+a given risk need to be able to monitor swarm behaviour mechanistically, and
+intervene before the harm is done.
 
-This repository sets out the scope of an entry to the
-[AI Swarm Dynamics Hackathon](https://swarmchasing.com) (AI Village and Grove
-Research, 3 to 4 October 2026). It holds the code, the plan, the contracts between
-workstreams and the results.
+A belay is a safety line you attach to yourself before going somewhere
+dangerous, on a rock face or on a space walk. Someone else holds it, sees you
+fall, and pulls you back to safety. This repository provides a digital belay
+for agent swarms.
 
-## Why "Belay"
+The process is like a fire alarm or other sealed safety equipment. A
+third-party certifier first tests the device to establish a safety baseline.
+The device is then deployed as a sealed black box that signals remotely to a
+third-party monitor, like the fire brigade.
 
-A belay is the rope and system that catch a climber who falls. It is what you
-want on yourself when you go somewhere dangerous, on a rock face or outside a
-spacecraft. It does not stop you climbing. Someone else holds it, and the gear
-is certified to a standard that nobody needs to open to trust.
+Technically, this uses multi-layer, non-linear concept probes organised in an
+ontology. The hierarchy allows batching and hierarchical activation, so a far
+wider range of concepts can be monitored continuously with a very small
+deployment footprint: [HAT](https://github.com/p0ss/headspace-ambient-transducer)
+runs a pack of nearly 8,000 concepts with as few as 0.5% of its probes
+resident at once, 99.5% fewer than scoring them all, which makes granular
+monitoring practical at runtime. A third party then certifies a subset of
+these probes, say those in a risk area it is responsible for or expert in, and
+is given API access to monitor just those probes, in just those agents,
+without ongoing access to the model weights.
+
+This approach has already been demonstrated for tracking compliance with the
+EU AI Act and Australian legislation, paired with steering, and it extends to
+essentially any regulated domain. It enables contractual agreements between
+parties who distrust each other: neither side has full visibility of the
+other, but each can be assured of pre-agreed behaviours in pre-agreed agents,
+swarms and drones. That unlocks the same kind of certification and governance
+that underpins nuclear weapons treaties.
+
+Interpretability is not solved, but the techniques we already have are enough
+to give governance actors significant assurance. Certification is also an
+accelerator: those governance controls unlock agentic deployments in risky,
+regulated domains worth trillions in global economic benefit.
+
+Built for the [AI Swarm Dynamics Hackathon](https://swarmchasing.com) (AI
+Village and Grove Research, 3 to 4 October 2026). What we found is in
+[docs/results.md](docs/results.md).
+
+## Re-certification at pre-agreed points
 
 On a lead climb the climber clips into protection at points along the route.
 Those points are placed before anyone climbs, and a fall only goes back to the
