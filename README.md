@@ -3,6 +3,10 @@
 A digital belay for agent swarms: certified, mechanistic monitoring that a
 third party can hold, without access to the model's weights.
 
+[![Belay: video walkthrough](https://img.youtube.com/vi/4qgtb0egTpA/maxresdefault.jpg)](https://youtu.be/4qgtb0egTpA)
+
+*Video walkthrough: [youtu.be/4qgtb0egTpA](https://youtu.be/4qgtb0egTpA)*
+
 To be useful in the real world, model swarms must be trained and deployed in
 the real world. Training will inevitably have failures and deployments can
 drift, and these create real-world swarm harms. Today, third-party swarm
